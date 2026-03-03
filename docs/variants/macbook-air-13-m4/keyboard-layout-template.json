@@ -1,0 +1,665 @@
+{
+  "variantId": "macbook-air-13-m4",
+  "layoutName": "MacBook Air 13-inch M4 (German ISO baseline, ANSI-adjustable)",
+  "generatedAt": "2026-02-22T20:16:42Z",
+  "source": {
+    "keyEditorMap": "KeyLight/Models/KeyPositionManager.swift",
+    "coordinateSystem": "normalized-horizontal-position-0-to-1",
+    "widthUnit": "1.0-equals-standard-key-width"
+  },
+  "baseline": [
+    {
+      "keyCode": 53,
+      "label": "esc",
+      "position": 0.135,
+      "width": 1.0,
+      "row": 0
+    },
+    {
+      "keyCode": 122,
+      "label": "F1",
+      "position": 0.195,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 120,
+      "label": "F2",
+      "position": 0.250,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 99,
+      "label": "F3",
+      "position": 0.305,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 118,
+      "label": "F4",
+      "position": 0.360,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 96,
+      "label": "F5",
+      "position": 0.420,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 97,
+      "label": "F6",
+      "position": 0.475,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 98,
+      "label": "F7",
+      "position": 0.530,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 100,
+      "label": "F8",
+      "position": 0.585,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 101,
+      "label": "F9",
+      "position": 0.640,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 109,
+      "label": "F10",
+      "position": 0.695,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 103,
+      "label": "F11",
+      "position": 0.750,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 111,
+      "label": "F12",
+      "position": 0.805,
+      "width": 0.8,
+      "row": 0
+    },
+    {
+      "keyCode": 50,
+      "label": "`",
+      "position": 0.150,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 18,
+      "label": "1",
+      "position": 0.205,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 19,
+      "label": "2",
+      "position": 0.260,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 20,
+      "label": "3",
+      "position": 0.315,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 21,
+      "label": "4",
+      "position": 0.370,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 23,
+      "label": "5",
+      "position": 0.425,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 22,
+      "label": "6",
+      "position": 0.480,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 26,
+      "label": "7",
+      "position": 0.535,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 28,
+      "label": "8",
+      "position": 0.590,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 25,
+      "label": "9",
+      "position": 0.645,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 29,
+      "label": "0",
+      "position": 0.700,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 27,
+      "label": "-",
+      "position": 0.755,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 24,
+      "label": "=",
+      "position": 0.810,
+      "width": 1.0,
+      "row": 1
+    },
+    {
+      "keyCode": 51,
+      "label": "⌫",
+      "position": 0.860,
+      "width": 1.5,
+      "row": 1
+    },
+    {
+      "keyCode": 48,
+      "label": "⇥",
+      "position": 0.162,
+      "width": 1.5,
+      "row": 2
+    },
+    {
+      "keyCode": 12,
+      "label": "Q",
+      "position": 0.225,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 13,
+      "label": "W",
+      "position": 0.280,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 14,
+      "label": "E",
+      "position": 0.335,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 15,
+      "label": "R",
+      "position": 0.390,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 17,
+      "label": "T",
+      "position": 0.445,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 16,
+      "label": "Y",
+      "position": 0.500,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 32,
+      "label": "U",
+      "position": 0.555,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 34,
+      "label": "I",
+      "position": 0.610,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 31,
+      "label": "O",
+      "position": 0.665,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 35,
+      "label": "P",
+      "position": 0.720,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 33,
+      "label": "[",
+      "position": 0.775,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 30,
+      "label": "]",
+      "position": 0.830,
+      "width": 1.0,
+      "row": 2
+    },
+    {
+      "keyCode": 42,
+      "label": "\\\\",
+      "position": 0.872,
+      "width": 1.5,
+      "row": 2
+    },
+    {
+      "keyCode": 57,
+      "label": "⇪",
+      "position": 0.168,
+      "width": 1.75,
+      "row": 3
+    },
+    {
+      "keyCode": 0,
+      "label": "A",
+      "position": 0.240,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 1,
+      "label": "S",
+      "position": 0.295,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 2,
+      "label": "D",
+      "position": 0.350,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 3,
+      "label": "F",
+      "position": 0.405,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 5,
+      "label": "G",
+      "position": 0.460,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 4,
+      "label": "H",
+      "position": 0.515,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 38,
+      "label": "J",
+      "position": 0.570,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 40,
+      "label": "K",
+      "position": 0.625,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 37,
+      "label": "L",
+      "position": 0.680,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 41,
+      "label": ";",
+      "position": 0.735,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 39,
+      "label": "'",
+      "position": 0.790,
+      "width": 1.0,
+      "row": 3
+    },
+    {
+      "keyCode": 36,
+      "label": "⏎",
+      "position": 0.855,
+      "width": 1.75,
+      "row": 3
+    },
+    {
+      "keyCode": 56,
+      "label": "⇧",
+      "position": 0.155,
+      "width": 1.25,
+      "row": 4
+    },
+    {
+      "keyCode": 10,
+      "label": "<>",
+      "position": 0.220,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 6,
+      "label": "Z",
+      "position": 0.260,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 7,
+      "label": "X",
+      "position": 0.315,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 8,
+      "label": "C",
+      "position": 0.370,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 9,
+      "label": "V",
+      "position": 0.425,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 11,
+      "label": "B",
+      "position": 0.480,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 45,
+      "label": "N",
+      "position": 0.535,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 46,
+      "label": "M",
+      "position": 0.590,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 43,
+      "label": ",",
+      "position": 0.645,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 47,
+      "label": ".",
+      "position": 0.700,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 44,
+      "label": "/",
+      "position": 0.755,
+      "width": 1.0,
+      "row": 4
+    },
+    {
+      "keyCode": 60,
+      "label": "⇧",
+      "position": 0.840,
+      "width": 2.75,
+      "row": 4
+    },
+    {
+      "keyCode": 63,
+      "label": "fn",
+      "position": 0.145,
+      "width": 1.0,
+      "row": 5
+    },
+    {
+      "keyCode": 59,
+      "label": "⌃",
+      "position": 0.200,
+      "width": 1.0,
+      "row": 5
+    },
+    {
+      "keyCode": 58,
+      "label": "⌥",
+      "position": 0.255,
+      "width": 1.0,
+      "row": 5
+    },
+    {
+      "keyCode": 55,
+      "label": "⌘",
+      "position": 0.320,
+      "width": 1.25,
+      "row": 5
+    },
+    {
+      "keyCode": 49,
+      "label": "space",
+      "position": 0.500,
+      "width": 6.0,
+      "row": 5
+    },
+    {
+      "keyCode": 54,
+      "label": "⌘",
+      "position": 0.680,
+      "width": 1.25,
+      "row": 5
+    },
+    {
+      "keyCode": 61,
+      "label": "⌥",
+      "position": 0.745,
+      "width": 1.0,
+      "row": 5
+    },
+    {
+      "keyCode": 123,
+      "label": "←",
+      "position": 0.810,
+      "width": 1.0,
+      "row": 5
+    },
+    {
+      "keyCode": 126,
+      "label": "↑",
+      "position": 0.860,
+      "width": 0.8,
+      "row": 5
+    },
+    {
+      "keyCode": 125,
+      "label": "↓",
+      "position": 0.860,
+      "width": 0.8,
+      "row": 5
+    },
+    {
+      "keyCode": 124,
+      "label": "→",
+      "position": 0.910,
+      "width": 1.0,
+      "row": 5
+    },
+    {
+      "keyCode": 500,
+      "label": "☀-",
+      "position": 0.195,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 501,
+      "label": "☀+",
+      "position": 0.250,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 502,
+      "label": "⧉",
+      "position": 0.305,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 503,
+      "label": "🔍",
+      "position": 0.360,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 504,
+      "label": "🎤",
+      "position": 0.420,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 505,
+      "label": "🌙",
+      "position": 0.475,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 506,
+      "label": "F7m",
+      "position": 0.530,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 516,
+      "label": "⏯",
+      "position": 0.585,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 517,
+      "label": "⏩",
+      "position": 0.640,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 518,
+      "label": "🔇",
+      "position": 0.695,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 519,
+      "label": "🔉",
+      "position": 0.750,
+      "width": 0.8,
+      "row": 6
+    },
+    {
+      "keyCode": 520,
+      "label": "🔊",
+      "position": 0.805,
+      "width": 0.8,
+      "row": 6
+    }
+  ],
+  "overrideSlots": {
+    "positionOffsets": {
+      "10": 0.0,
+      "49": 0.0,
+      "123": 0.0,
+      "124": 0.0,
+      "125": 0.0,
+      "126": 0.0
+    },
+    "widthMultipliers": {
+      "10": 1.0,
+      "49": 1.0,
+      "123": 1.0,
+      "124": 1.0,
+      "125": 1.0,
+      "126": 1.0
+    }
+  },
+  "notes": [
+    "ISO is the primary baseline used by this variant.",
+    "ANSI users can keep the same baseline and only tweak offsets for the physical keys that differ.",
+    "Use the in-app Key Position Editor to refine and then export your updated settings bundle."
+  ]
+}

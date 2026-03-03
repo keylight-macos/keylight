@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "macbook-air-13-m4-default",
+      "variantId": "macbook-air-13-m4",
+      "displayName": "MacBook Air 13 M4 Default",
+      "resourcePath": "macbook-air-13-m4-layout.json"
+    },
+    {
+      "id": "macbook-pro-14-m4",
+      "variantId": "macbook-pro-14-m4",
+      "displayName": "MacBook Pro 14 M4",
+      "resourcePath": "macbook-pro-14-m4-layout.json"
+    }
+  ]
+}

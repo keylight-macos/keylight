@@ -1,0 +1,513 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		039A35018C6044DEB0471E90 /* VariantPresets in Resources */ = {isa = PBXBuildFile; fileRef = 27E329D7653A4E568EDE7BA0 /* VariantPresets */; };
+		07FA3D6B610C5E5FAC7C85D0 /* KeyPositionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B781FCBD49CEEA98C03DFE6 /* KeyPositionEditorView.swift */; };
+		27696294CEEDE6A794C4145D /* GlowOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42C7F70959DB4F1BA7CCCFFA /* GlowOverlayWindow.swift */; };
+		46143D0364269D8C823EA4B2 /* KeyLightApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09A21A722EA6548D1A666BA /* KeyLightApp.swift */; };
+		4F43E5FBF3B77CBFF2C9F788 /* KeyLightLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57913A75F4E826856365A90 /* KeyLightLog.swift */; };
+		528521486593AF92A20564C2 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C615F1CC81CCBC89F42A6C7 /* AppDelegate.swift */; };
+		5A446C00CDDD2A0D023651E4 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860BB44450D83CBBBD94011F /* SettingsManager.swift */; };
+		5FD43430E908B2FC9D6C0E6F /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A412D4CD99F5DA22CFB459FF /* MenuBarView.swift */; };
+		63A8DA821C1F6C2367C6BEBA /* KeyLightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59BCB596E5BD5A0EF67140E /* KeyLightTests.swift */; };
+		747D4CB8286737C324B93967 /* SettingsContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 671302256D22F0E5BC78DFF7 /* SettingsContentView.swift */; };
+		776DB7153EE21994DB5F6EB0 /* KeyPositionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF16039069552DFBD2B407B8 /* KeyPositionManager.swift */; };
+		7D4E5760CEC04C8FEE13B7C6 /* GlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4445A35B38579943EA41E74A /* GlowView.swift */; };
+		9F64426EDDD79A7EF0CC7765 /* KeyboardMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EA0CAEE1416A86E026E1A2 /* KeyboardMonitor.swift */; };
+		A7B2A3B092627FA47B9D65A9 /* PermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9D63107884532D8A27F6025 /* PermissionManager.swift */; };
+		A9010A8A1A2B1D091025D801 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4F8224F3A76E1840324735CA /* Assets.xcassets */; };
+		CD5CA122BCD87C886457A4E3 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B3D1F9FAF222631B3CCA5F /* SettingsWindow.swift */; };
+		D2991C84D5077D4DB29A0667 /* KeyMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90DB2F39E07F2484FB958455 /* KeyMapping.swift */; };
+		F98158A4EBE361E6FF4FA032 /* KeyWidthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF7BCAFB57AC882326F2F065 /* KeyWidthManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5AD4F9B82520ACB8901C235E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0AAFDC1F005C92A40D7E4633 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6E6B9FE66AEC515454A37875;
+			remoteInfo = KeyLight;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		02F652729ECDF87B6FB00C8E /* KeyLight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeyLight.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		27E329D7653A4E568EDE7BA0 /* VariantPresets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/VariantPresets; sourceTree = "<group>"; };
+		2B781FCBD49CEEA98C03DFE6 /* KeyPositionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyPositionEditorView.swift; sourceTree = "<group>"; };
+		42C7F70959DB4F1BA7CCCFFA /* GlowOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlowOverlayWindow.swift; sourceTree = "<group>"; };
+		4445A35B38579943EA41E74A /* GlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlowView.swift; sourceTree = "<group>"; };
+		4E8696A9A26491AFE761AD84 /* KeyLightTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KeyLightTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4F8224F3A76E1840324735CA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		5C615F1CC81CCBC89F42A6C7 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		671302256D22F0E5BC78DFF7 /* SettingsContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsContentView.swift; sourceTree = "<group>"; };
+		80EA56167A91AC0F9FCDF342 /* KeyLight.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KeyLight.entitlements; sourceTree = "<group>"; };
+		860BB44450D83CBBBD94011F /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
+		90DB2F39E07F2484FB958455 /* KeyMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyMapping.swift; sourceTree = "<group>"; };
+		98EA0CAEE1416A86E026E1A2 /* KeyboardMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMonitor.swift; sourceTree = "<group>"; };
+		A412D4CD99F5DA22CFB459FF /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		B57913A75F4E826856365A90 /* KeyLightLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyLightLog.swift; sourceTree = "<group>"; };
+		BF7BCAFB57AC882326F2F065 /* KeyWidthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyWidthManager.swift; sourceTree = "<group>"; };
+		C09A21A722EA6548D1A666BA /* KeyLightApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyLightApp.swift; sourceTree = "<group>"; };
+		D59BCB596E5BD5A0EF67140E /* KeyLightTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyLightTests.swift; sourceTree = "<group>"; };
+		D6B3D1F9FAF222631B3CCA5F /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
+		E9D63107884532D8A27F6025 /* PermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionManager.swift; sourceTree = "<group>"; };
+		EF16039069552DFBD2B407B8 /* KeyPositionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyPositionManager.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		470FCC04D668642A7587B435 /* KeyLight */ = {
+			isa = PBXGroup;
+			children = (
+				5C615F1CC81CCBC89F42A6C7 /* AppDelegate.swift */,
+				4F8224F3A76E1840324735CA /* Assets.xcassets */,
+				27E329D7653A4E568EDE7BA0 /* VariantPresets */,
+				80EA56167A91AC0F9FCDF342 /* KeyLight.entitlements */,
+				C09A21A722EA6548D1A666BA /* KeyLightApp.swift */,
+				FD032F8FD5BC34CC1AFA5B65 /* Models */,
+				EF1C3EAFA1858CC351E9121B /* Services */,
+				BE3441AF7B2633A2619F4CF7 /* Views */,
+			);
+			path = KeyLight;
+			sourceTree = "<group>";
+		};
+		82FD832C9DD48433F01A0A0E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				02F652729ECDF87B6FB00C8E /* KeyLight.app */,
+				4E8696A9A26491AFE761AD84 /* KeyLightTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		BE3441AF7B2633A2619F4CF7 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				42C7F70959DB4F1BA7CCCFFA /* GlowOverlayWindow.swift */,
+				4445A35B38579943EA41E74A /* GlowView.swift */,
+				2B781FCBD49CEEA98C03DFE6 /* KeyPositionEditorView.swift */,
+				A412D4CD99F5DA22CFB459FF /* MenuBarView.swift */,
+				671302256D22F0E5BC78DFF7 /* SettingsContentView.swift */,
+				D6B3D1F9FAF222631B3CCA5F /* SettingsWindow.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		CB030EA6A981855BD1BB0F8C = {
+			isa = PBXGroup;
+			children = (
+				470FCC04D668642A7587B435 /* KeyLight */,
+				CB60C03DD5926444D0A7EED5 /* KeyLightTests */,
+				82FD832C9DD48433F01A0A0E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CB60C03DD5926444D0A7EED5 /* KeyLightTests */ = {
+			isa = PBXGroup;
+			children = (
+				D59BCB596E5BD5A0EF67140E /* KeyLightTests.swift */,
+			);
+			path = KeyLightTests;
+			sourceTree = "<group>";
+		};
+		EF1C3EAFA1858CC351E9121B /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				98EA0CAEE1416A86E026E1A2 /* KeyboardMonitor.swift */,
+				B57913A75F4E826856365A90 /* KeyLightLog.swift */,
+				E9D63107884532D8A27F6025 /* PermissionManager.swift */,
+				860BB44450D83CBBBD94011F /* SettingsManager.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		FD032F8FD5BC34CC1AFA5B65 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				90DB2F39E07F2484FB958455 /* KeyMapping.swift */,
+				EF16039069552DFBD2B407B8 /* KeyPositionManager.swift */,
+				BF7BCAFB57AC882326F2F065 /* KeyWidthManager.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6E6B9FE66AEC515454A37875 /* KeyLight */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F7CC2366B8A76C3FB90DA53E /* Build configuration list for PBXNativeTarget "KeyLight" */;
+			buildPhases = (
+				56861CD666B2671CA0011CAD /* Sources */,
+				EBC510420F5F75FD94CBABAA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KeyLight;
+			packageProductDependencies = (
+			);
+			productName = KeyLight;
+			productReference = 02F652729ECDF87B6FB00C8E /* KeyLight.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E98B075415FCE1A3D4A8B82A /* KeyLightTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 59632DC70315540BE06D79C0 /* Build configuration list for PBXNativeTarget "KeyLightTests" */;
+			buildPhases = (
+				B61DC292FC688A00C038559B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				683173C0C4FA30FDB7A72327 /* PBXTargetDependency */,
+			);
+			name = KeyLightTests;
+			packageProductDependencies = (
+			);
+			productName = KeyLightTests;
+			productReference = 4E8696A9A26491AFE761AD84 /* KeyLightTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0AAFDC1F005C92A40D7E4633 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					6E6B9FE66AEC515454A37875 = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = B81DDCF171503FA8AFB4D75D /* Build configuration list for PBXProject "KeyLight" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CB030EA6A981855BD1BB0F8C;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6E6B9FE66AEC515454A37875 /* KeyLight */,
+				E98B075415FCE1A3D4A8B82A /* KeyLightTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EBC510420F5F75FD94CBABAA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A9010A8A1A2B1D091025D801 /* Assets.xcassets in Resources */,
+				039A35018C6044DEB0471E90 /* VariantPresets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		56861CD666B2671CA0011CAD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				528521486593AF92A20564C2 /* AppDelegate.swift in Sources */,
+				27696294CEEDE6A794C4145D /* GlowOverlayWindow.swift in Sources */,
+				7D4E5760CEC04C8FEE13B7C6 /* GlowView.swift in Sources */,
+				46143D0364269D8C823EA4B2 /* KeyLightApp.swift in Sources */,
+				4F43E5FBF3B77CBFF2C9F788 /* KeyLightLog.swift in Sources */,
+				D2991C84D5077D4DB29A0667 /* KeyMapping.swift in Sources */,
+				07FA3D6B610C5E5FAC7C85D0 /* KeyPositionEditorView.swift in Sources */,
+				776DB7153EE21994DB5F6EB0 /* KeyPositionManager.swift in Sources */,
+				F98158A4EBE361E6FF4FA032 /* KeyWidthManager.swift in Sources */,
+				9F64426EDDD79A7EF0CC7765 /* KeyboardMonitor.swift in Sources */,
+				5FD43430E908B2FC9D6C0E6F /* MenuBarView.swift in Sources */,
+				A7B2A3B092627FA47B9D65A9 /* PermissionManager.swift in Sources */,
+				747D4CB8286737C324B93967 /* SettingsContentView.swift in Sources */,
+				5A446C00CDDD2A0D023651E4 /* SettingsManager.swift in Sources */,
+				CD5CA122BCD87C886457A4E3 /* SettingsWindow.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B61DC292FC688A00C038559B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				63A8DA821C1F6C2367C6BEBA /* KeyLightTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		683173C0C4FA30FDB7A72327 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6E6B9FE66AEC515454A37875 /* KeyLight */;
+			targetProxy = 5AD4F9B82520ACB8901C235E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		113AEA07AD722150E4C94547 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keylight.tests;
+				PRODUCT_NAME = KeyLightTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/KeyLight.app/Contents/MacOS/KeyLight";
+			};
+			name = Debug;
+		};
+		506319F50821A4446B96C3B6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		68A80B2D57FBCC5BADC82422 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_REQUIRED = NO;
+					CODE_SIGN_ENTITLEMENTS = KeyLight/KeyLight.entitlements;
+					CODE_SIGN_IDENTITY = "-";
+					CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+					CODE_SIGN_STYLE = Manual;
+					COMBINE_HIDPI_IMAGES = YES;
+					CURRENT_PROJECT_VERSION = 1;
+					ENABLE_HARDENED_RUNTIME = YES;
+					GENERATE_INFOPLIST_FILE = YES;
+					INFOPLIST_GENERATION_MODE = GeneratedFile;
+				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keylight.app;
+				PRODUCT_NAME = KeyLight;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6;
+			};
+			name = Release;
+		};
+		69CFA93E8C0872B505014AAB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = KeyLight/KeyLight.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_GENERATION_MODE = GeneratedFile;
+				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keylight.app;
+				PRODUCT_NAME = KeyLight;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6;
+			};
+			name = Debug;
+		};
+		8B61209CDBB695CD83B29EC4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keylight.tests;
+				PRODUCT_NAME = KeyLightTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/KeyLight.app/Contents/MacOS/KeyLight";
+			};
+			name = Release;
+		};
+		DD01F7444BB7237CA813B995 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		59632DC70315540BE06D79C0 /* Build configuration list for PBXNativeTarget "KeyLightTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				113AEA07AD722150E4C94547 /* Debug */,
+				8B61209CDBB695CD83B29EC4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B81DDCF171503FA8AFB4D75D /* Build configuration list for PBXProject "KeyLight" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DD01F7444BB7237CA813B995 /* Debug */,
+				506319F50821A4446B96C3B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F7CC2366B8A76C3FB90DA53E /* Build configuration list for PBXNativeTarget "KeyLight" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				69CFA93E8C0872B505014AAB /* Debug */,
+				68A80B2D57FBCC5BADC82422 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0AAFDC1F005C92A40D7E4633 /* Project object */;
+}

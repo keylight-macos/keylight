@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "kind": "layoutProfile",
+  "name": "Recovered Layout Fallback 2026-02-27",
+  "keyOffsets": {
+    "10": 0.0,
+    "44": 0.0,
+    "45": 0.0,
+    "46": 0.0,
+    "47": 0.0,
+    "123": 0.0,
+    "124": 0.0,
+    "125": 0.0,
+    "126": 0.0
+  },
+  "keyWidthOverrides": {}
+}
