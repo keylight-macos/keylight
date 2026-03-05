@@ -1,0 +1,55 @@
+name: KeyLight
+options:
+  bundleIdPrefix: com.keylight
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: false
+
+targets:
+  KeyLight:
+    type: application
+    platform: macOS
+    scheme:
+      testTargets:
+        - KeyLightTests
+    sources:
+      - KeyLight
+    resources:
+      - KeyLight/Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keylight.app
+        PRODUCT_NAME: KeyLight
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        INFOPLIST_GENERATION_MODE: GeneratedFile
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGN_ENTITLEMENTS: KeyLight/KeyLight.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_STYLE: Manual
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+          ENABLE_HARDENED_RUNTIME: YES
+    entitlements:
+      path: KeyLight/KeyLight.entitlements
+
+  KeyLightTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - KeyLightTests
+    dependencies:
+      - target: KeyLight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.keylight.tests
+        PRODUCT_NAME: KeyLightTests
+        SWIFT_VERSION: "6"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: YES
