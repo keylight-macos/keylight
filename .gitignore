@@ -36,7 +36,6 @@ fastlane/test_output/
 *.dSYM.zip
 *.dSYM
 dist/*
-!dist/KeyLight-1.0.0.dmg
 dist/rw.*.dmg
 dist/.DS_Store
 
