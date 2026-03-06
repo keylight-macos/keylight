@@ -8,9 +8,6 @@ Lightweight glow effects for your keyboard with more immersive typing, tuned for
 
 <img src="./docs/assets/keylight_demo.png" alt="KeyLight Hero" width="100%">
 
-
-
-
 ## Inspiration
 
 Hi, KeyLight was inspired by a [YouTube video](https://www.youtube.com/watch?v=esY3iS4l3Xs) by the creator HTX Studio. I wanted to have a piano-visualizer-like effect when typing. The effect best works in dark mode and with the dock set on auto-hide or when the dock is on the side of the screen.
@@ -22,6 +19,8 @@ Hi, KeyLight was inspired by a [YouTube video](https://www.youtube.com/watch?v=e
 - No noticeable battery drain in normal use on Apple Silicon (tested on M4).
 - Highly customizable effects: colors, gradients, per-key behavior, dimensions, roundness, and fade timing.
 - Built-in key position editor to calibrate glow placement to your keyboard and monitor combination.
+
+<img src="./docs/assets/keylight_demo.gif" alt="KeyLight Hero" width="100%">
 
 ## System Requirements
 
