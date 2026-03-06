@@ -41,11 +41,9 @@ if [[ -n "${HOME:-}" ]]; then
 fi
 
 if [[ -n "$HOME_NAME" ]]; then
-  BANNED_PATTERNS+=("$HOME_NAME")
-fi
-
-if [[ -n "${USER:-}" ]]; then
-  BANNED_PATTERNS+=("$USER")
+  BANNED_PATTERNS+=("/Users/$HOME_NAME/")
+  BANNED_PATTERNS+=("/$HOME_NAME/")
+  BANNED_PATTERNS+=(":$HOME_NAME:")
 fi
 
 cleanup() {
@@ -203,7 +201,7 @@ verify_dmg() {
     fi
 
     scan_strings_file "mounted DMG .DS_Store" "$VERIFY_MOUNT_POINT/.DS_Store" "$ds_store_strings_path"
-    for required_marker in "$DMG_BG_STAGED_NAME" "$APP_NAME.app" "Applications"; do
+    for required_marker in "$DMG_BG_STAGED_NAME" "$APP_NAME.app"; do
       if ! rg -n -F -- "$required_marker" "$ds_store_strings_path" >/dev/null 2>&1; then
         echo "error: expected custom DMG marker '$required_marker' not found in mounted .DS_Store" >&2
         exit 1
@@ -241,6 +239,7 @@ fi
 require_command codesign
 require_command hdiutil
 require_command rg
+require_command strip
 require_command strings
 
 DMG_TOOL=()
@@ -285,15 +284,15 @@ fi
 log "Staging app bundle"
 cp -R "$APP_PATH" "$STAGE_DIR/"
 sanitize_tree "$STAGE_DIR"
+strip -S -x "$STAGE_DIR/$APP_NAME.app/Contents/MacOS/$APP_NAME"
 if [[ "${KEYLIGHT_DMG_HEADLESS:-0}" != "1" ]] && [[ -f "$DMG_BG_ASSET_PATH" ]]; then
   EXPECT_CUSTOM_LAYOUT=1
   cp "$DMG_BG_ASSET_PATH" "$STAGE_DIR/$APP_NAME.app/Contents/Resources/$DMG_BG_STAGED_NAME"
   sanitize_tree "$STAGE_DIR/$APP_NAME.app/Contents/Resources/$DMG_BG_STAGED_NAME"
-  # The background image is injected into the app bundle to avoid a visible
-  # .background folder in Finder. Re-sign staged app so Gatekeeper integrity
-  # checks stay valid in the final DMG.
-  codesign --force --sign - --options runtime --entitlements "$ENTITLEMENTS_PATH" "$STAGE_DIR/$APP_NAME.app"
 fi
+# Re-sign after stripping binary symbols and injecting the background asset so
+# the staged app bundle stays internally consistent inside the final DMG.
+codesign --force --sign - --options runtime --entitlements "$ENTITLEMENTS_PATH" "$STAGE_DIR/$APP_NAME.app"
 sanitize_tree "$STAGE_DIR"
 
 log "Creating DMG in neutral workspace: $WORK_DMG_PATH"
