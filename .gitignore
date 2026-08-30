@@ -24,6 +24,7 @@ xcuserdata/
 .build/
 .swiftpm/
 Package.resolved
+!KeyLight.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # Fastlane
 fastlane/report.xml
