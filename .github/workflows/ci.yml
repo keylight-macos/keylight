@@ -1,0 +1,163 @@
+name: KeyLight CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keylight-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-analyze:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      KEYLIGHT_SOURCE_PACKAGES: ${{ runner.temp }}/KeyLightSourcePackages
+
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify toolchain and source policy
+        shell: bash
+        run: |
+          xcodebuild -version
+          test "$(xcodebuild -version | awk 'NR == 1 {split($2, value, "."); print value[1]}')" -ge 26
+          if ! xcrun --find metal >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          ./scripts/verify-project-policy.sh
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          shell_roots=(scripts)
+          if test -d script; then
+            shell_roots+=(script)
+          fi
+          while IFS= read -r -d '' script_path; do
+            bash -n "$script_path"
+          done < <(find "${shell_roots[@]}" -type f -name '*.sh' -print0)
+
+      - name: Test signed-update verification failure cases
+        shell: bash
+        run: |
+          CLANG_MODULE_CACHE_PATH="$RUNNER_TEMP/KeyLightUpdateVerifierModuleCache" \
+          SWIFT_MODULECACHE_PATH="$RUNNER_TEMP/KeyLightUpdateVerifierModuleCache" \
+            xcrun swift scripts/test-update-signature-verifier.swift
+
+      - name: Resolve only locked dependencies
+        shell: bash
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project KeyLight.xcodeproj \
+            -scheme KeyLight \
+            -clonedSourcePackagesDirPath "$KEYLIGHT_SOURCE_PACKAGES" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile
+
+      - name: Strict debug build
+        shell: bash
+        run: |
+          xcodebuild \
+            -project KeyLight.xcodeproj \
+            -scheme KeyLight \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KeyLightDebug" \
+            -clonedSourcePackagesDirPath "$KEYLIGHT_SOURCE_PACKAGES" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            SWIFT_VERSION=6 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Isolated compatibility and unit tests
+        shell: bash
+        run: |
+          xcodebuild \
+            -project KeyLight.xcodeproj \
+            -scheme KeyLight \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KeyLightTests" \
+            -clonedSourcePackagesDirPath "$KEYLIGHT_SOURCE_PACKAGES" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            SWIFT_VERSION=6 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Xcode static analyzer
+        shell: bash
+        run: |
+          xcodebuild \
+            -project KeyLight.xcodeproj \
+            -scheme KeyLight \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KeyLightAnalyze" \
+            -clonedSourcePackagesDirPath "$KEYLIGHT_SOURCE_PACKAGES" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            SWIFT_VERSION=6 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
+
+      - name: Universal release build
+        shell: bash
+        run: |
+          xcodebuild \
+            -project KeyLight.xcodeproj \
+            -scheme KeyLight \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KeyLightRelease" \
+            -clonedSourcePackagesDirPath "$KEYLIGHT_SOURCE_PACKAGES" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            SWIFT_VERSION=6 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            ARCHS='arm64 x86_64' \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Validate universal release, privacy, updater, and metallib
+        shell: bash
+        run: |
+          app="$RUNNER_TEMP/KeyLightRelease/Build/Products/Release/KeyLight.app"
+          info="$app/Contents/Info.plist"
+          resources="$app/Contents/Resources"
+          binary="$app/Contents/MacOS/KeyLight"
+          sparkle="$app/Contents/Frameworks/Sparkle.framework"
+          test -d "$app"
+          test "$(lipo -archs "$binary")" = 'x86_64 arm64' || test "$(lipo -archs "$binary")" = 'arm64 x86_64'
+          test "$(lipo -archs "$sparkle/Sparkle")" = 'x86_64 arm64' || test "$(lipo -archs "$sparkle/Sparkle")" = 'arm64 x86_64'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$sparkle/Resources/Info.plist")" = '2.9.5'
+          test -f "$resources/PrivacyInfo.xcprivacy"
+          plutil -lint "$resources/PrivacyInfo.xcprivacy"
+          test "$(plutil -extract NSPrivacyTracking raw -o - "$resources/PrivacyInfo.xcprivacy")" = 'false'
+          test -f "$resources/default.metallib"
+          strings "$resources/default.metallib" | rg -F keyLightRefractionVertex
+          strings "$resources/default.metallib" | rg -F keyLightRefractionFragment
+          test -z "$(find "$resources" -type f -name '*.metal' -print -quit)"
+          test "$(plutil -extract SUEnableAutomaticChecks raw -o - "$info")" = 'false'
+          test "$(plutil -extract SUAutomaticallyUpdate raw -o - "$info")" = 'false'
+          test "$(plutil -extract SUSendProfileInfo raw -o - "$info")" = 'false'
+          test "$(plutil -extract SUVerifyUpdateBeforeExtraction raw -o - "$info")" = 'true'
+          test "$(plutil -extract SURequireSignedFeed raw -o - "$info")" = 'true'
+          test -z "$(plutil -extract SUFeedURL raw -o - "$info" 2>/dev/null || true)"
+          test -z "$(plutil -extract SUPublicEDKey raw -o - "$info" 2>/dev/null || true)"
+          DEVELOPER_DIR="$DEVELOPER_DIR" xcrun vtool -show-build "$binary" > "$RUNNER_TEMP/KeyLight-vtool.txt"
+          test "$(rg -c '^    minos 14\.0$' "$RUNNER_TEMP/KeyLight-vtool.txt")" = '2'

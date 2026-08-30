@@ -15,39 +15,40 @@ private final class FadeOutDelegate: NSObject, CAAnimationDelegate {
     }
 }
 
+/// One identity-scoped Classic Glow surface. A surface remains reusable after
+/// its fade completes so ordinary sequential typing can keep the established
+/// slide animation without keeping inactive layers in the render tree.
+private final class ClassicGlowSurface {
+    var id: GlowID
+    var target: GlowTarget
+    let layer: CALayer
+    var isAlive = false
+    var fadeDelegate: FadeOutDelegate?
+
+    init(id: GlowID, target: GlowTarget, layer: CALayer) {
+        self.id = id
+        self.target = target
+        self.layer = layer
+    }
+}
+
 // MARK: - GlowView
 
 /// View that renders smooth, blurry glow effects at the bottom edge.
-/// Uses a single persistent glow layer that slides between key positions.
+/// Physically held keys own independent surfaces, while inactive surfaces are
+/// reused so single-key transitions retain the original slide/pop/fade motion.
 @MainActor
-final class GlowView: NSView {
+final class GlowView: NSView, GlowRenderer {
 
-    // MARK: - Single Glow State
+    var view: NSView { self }
+    var supportsConcurrentPhysicalTargets: Bool { true }
 
-    /// The single persistent glow layer (lazily created)
-    private var glowLayer: CALayer? = nil
+    // MARK: - Identity-Scoped Glow State
 
-    /// Keys currently held down
-    private var heldKeys: Set<UInt16> = []
-
-    /// Timestamps for each held key (for stale key detection)
-    private var keyTimestamps: [UInt16: CFTimeInterval] = [:]
-
-    /// Maximum time a key can stay in heldKeys without being refreshed (seconds)
-    private let staleKeyThreshold: CFTimeInterval = 0.5
-
-    /// The keyCode the glow is currently targeting
-    private var currentTargetKeyCode: UInt16? = nil
-
-    /// Current glow position (0.0-1.0 horizontal)
-    private var currentPosition: CGFloat = 0
-
-    /// Current glow key width
-    private var currentKeyWidth: CGFloat = 1.0
-
-    /// Whether the glow is currently visible (opacity > 0).
-    /// True from fade-in start, false only when fade-out naturally completes.
-    private var glowIsAlive: Bool = false
+    private var activeTargets: [GlowID: GlowTarget] = [:]
+    private var activeTargetOrder: [GlowID] = []
+    private var surfaces: [GlowID: ClassicGlowSurface] = [:]
+    private var surfaceOrder: [GlowID] = []
 
     /// Duration for the slide animation between key positions
     private let slideDuration: CFTimeInterval = 0.07
@@ -63,21 +64,24 @@ final class GlowView: NSView {
     private var cachedColorArrays: [[CGColor]] = []
     private var colorCacheValid = false
 
-    // MARK: - Configurable Settings
+    // MARK: - Configuration
 
-    var glowColor: NSColor = NSColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 1.0) {
-        didSet { colorCacheValid = false }
+    private var configuration = RendererConfiguration.standard
+
+    private var glowColor: NSColor { configuration.solidColor }
+    private var baseKeyWidth: CGFloat { configuration.baseKeyWidth }
+    private var glowHeight: CGFloat { configuration.glowHeight }
+    private var widthMultiplier: CGFloat { configuration.widthMultiplier }
+    private var selectedMaxOpacity: Float { configuration.maximumOpacity }
+    private var maxOpacity: Float {
+        configuration.chordAppearance.opacity(
+            selectedMaxOpacity,
+            activeMemberCount: activeChordMemberCount
+        )
     }
-    var baseKeyWidth: CGFloat = 60
-    var glowHeight: CGFloat = 60
-    var widthMultiplier: CGFloat = 1.0
-    var maxOpacity: Float = 0.7
-    var fadeOutDuration: CFTimeInterval = 1.5
-    var glowRoundness: CGFloat = 1.0
-    var glowFullness: CGFloat = 0.5 {
-        didSet { colorCacheValid = false }
-    }
-    var colorResolver: ((CGFloat) -> NSColor)? = nil
+    private var fadeOutDuration: CFTimeInterval { configuration.fadeDuration }
+    private var glowRoundness: CGFloat { configuration.roundness }
+    private var glowFullness: CGFloat { configuration.fullness }
 
     private let edgeEmergenceFraction: CGFloat = 0.5
     private let baseVerticalInset: CGFloat = 2.0
@@ -122,35 +126,56 @@ final class GlowView: NSView {
 
     // MARK: - Public API
 
-    func showGlow(at horizontalPosition: CGFloat, keyCode: UInt16, keyWidth: CGFloat) {
-        // Purge stale keys that may have missed their keyUp event
-        purgeStaleKeys()
+    func apply(_ configuration: RendererConfiguration) {
+        guard self.configuration != configuration else { return }
+        let wasReducingMotion = self.configuration.reduceMotion
+        self.configuration = configuration
+        colorCacheValid = false
 
-        // Update timestamp for this key
-        keyTimestamps[keyCode] = CACurrentMediaTime()
-
-        // Key repeat: same key firing again while held — just keep it alive
-        if heldKeys.contains(keyCode) && currentTargetKeyCode == keyCode {
-            let container = ensureGlowLayer()
-            // Only intervene if something is wrong (e.g. a fade-out snuck in).
-            // Otherwise leave the layer alone to avoid disrupting animations.
-            if container.opacity != maxOpacity && container.animation(forKey: "fadeOut") != nil {
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                container.removeAllAnimations()
-                container.opacity = maxOpacity
-                CATransaction.commit()
-            }
-            glowIsAlive = true
-            return
+        if configuration.reduceMotion && !wasReducingMotion {
+            freezeGeometryAnimationsAtCurrentState()
         }
 
-        heldKeys.insert(keyCode)
-        currentTargetKeyCode = keyCode
+        refreshVisibleConfiguration()
+    }
 
-        let container = ensureGlowLayer()
+    func show(_ target: GlowTarget) {
+        let id = target.id
+        let previousTarget = activeTargets[id]
+        let wasActive = previousTarget != nil
+        let hadActiveTargets = !activeTargets.isEmpty
+        let surface = surface(
+            for: target,
+            mayReuseVisibleRetreat: !hadActiveTargets
+        )
 
-        if glowIsAlive {
+        activeTargets[id] = target
+        if !wasActive {
+            activeTargetOrder.append(id)
+        }
+        surface.target = target
+        refreshActiveChordOpacity()
+
+        switch target.id {
+        case .physicalKey:
+            if wasActive, previousTarget == target, refresh(id) {
+                return
+            }
+            showAnimated(target, on: surface)
+        case .preview:
+            updatePreview(target, on: surface)
+        }
+    }
+
+    private func showAnimated(
+        _ target: GlowTarget,
+        on surface: ClassicGlowSurface
+    ) {
+        let horizontalPosition = CGFloat(target.horizontalPosition)
+        let keyWidth = CGFloat(target.keyWidth)
+        let container = surface.layer
+
+        if surface.isAlive {
             // CASE A: Glow is still visible — slide to new position
 
             // 1. Capture current visual state from presentation layer
@@ -160,12 +185,13 @@ final class GlowView: NSView {
 
             // 2. Cancel all in-progress animations (fade-out, previous slides)
             container.removeAllAnimations()
+            surface.fadeDelegate = nil
 
             // 3. Compute new frame and update content
             let newFrame = computeFrame(for: horizontalPosition, keyWidth: keyWidth)
             let effectiveWidth = newFrame.width
             let flatHeight = flatGlowHeight
-            let perKeyColor: NSColor? = colorResolver?(horizontalPosition)
+            let perKeyColor = configuration.resolvedColorOverride(for: target)
 
             // 4. Set model values and animate — all within disabled-actions transaction
             CATransaction.begin()
@@ -175,22 +201,26 @@ final class GlowView: NSView {
             container.opacity = maxOpacity
             updateGlowSublayers(container: container, width: effectiveWidth, height: flatHeight, color: perKeyColor)
 
-            // 5. Animate position (slide)
-            let slidePosition = CABasicAnimation(keyPath: "position")
-            slidePosition.fromValue = presentationPosition
-            slidePosition.toValue = container.position
-            slidePosition.duration = slideDuration
-            slidePosition.timingFunction = easeOutTiming
+            if RendererMotionPolicy.allowsGeometryAnimation(
+                reduceMotion: configuration.reduceMotion
+            ) {
+                // 5. Animate position (slide)
+                let slidePosition = CABasicAnimation(keyPath: "position")
+                slidePosition.fromValue = presentationPosition
+                slidePosition.toValue = container.position
+                slidePosition.duration = slideDuration
+                slidePosition.timingFunction = easeOutTiming
 
-            // 6. Animate bounds (handles width changes between different keys)
-            let slideBounds = CABasicAnimation(keyPath: "bounds")
-            slideBounds.fromValue = presentationBounds
-            slideBounds.toValue = container.bounds
-            slideBounds.duration = slideDuration
-            slideBounds.timingFunction = easeOutTiming
+                // 6. Animate bounds (handles width changes between different keys)
+                let slideBounds = CABasicAnimation(keyPath: "bounds")
+                slideBounds.fromValue = presentationBounds
+                slideBounds.toValue = container.bounds
+                slideBounds.duration = slideDuration
+                slideBounds.timingFunction = easeOutTiming
 
-            container.add(slidePosition, forKey: "slidePosition")
-            container.add(slideBounds, forKey: "slideBounds")
+                container.add(slidePosition, forKey: "slidePosition")
+                container.add(slideBounds, forKey: "slideBounds")
+            }
 
             // 7. Restore opacity smoothly if it was mid-fade
             if presentationOpacity < maxOpacity {
@@ -207,11 +237,14 @@ final class GlowView: NSView {
         } else {
             // CASE B: Glow fully faded — appear fresh at new position
 
+            container.removeAllAnimations()
+            surface.fadeDelegate = nil
+
             // 1. Position instantly (no animation)
             let newFrame = computeFrame(for: horizontalPosition, keyWidth: keyWidth)
             let effectiveWidth = newFrame.width
             let flatHeight = flatGlowHeight
-            let perKeyColor: NSColor? = colorResolver?(horizontalPosition)
+            let perKeyColor = configuration.resolvedColorOverride(for: target)
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -237,25 +270,30 @@ final class GlowView: NSView {
                 y: finalPosition.y - (finalBounds.height - startHeight) * 0.5
             )
 
-            let popBounds = CABasicAnimation(keyPath: "bounds")
-            popBounds.fromValue = startBounds
-            popBounds.toValue = finalBounds
-            popBounds.duration = popInDuration
-            popBounds.timingFunction = easeOutTiming
-
-            let popPosition = CABasicAnimation(keyPath: "position")
-            popPosition.fromValue = startPosition
-            popPosition.toValue = finalPosition
-            popPosition.duration = popInDuration
-            popPosition.timingFunction = easeOutTiming
-
             let fadeIn = CABasicAnimation(keyPath: "opacity")
             fadeIn.fromValue = 0.0
             fadeIn.toValue = maxOpacity
             fadeIn.duration = popInDuration
             fadeIn.timingFunction = easeOutTiming
-            container.add(popBounds, forKey: "popBounds")
-            container.add(popPosition, forKey: "popPosition")
+
+            if RendererMotionPolicy.allowsGeometryAnimation(
+                reduceMotion: configuration.reduceMotion
+            ) {
+                let popBounds = CABasicAnimation(keyPath: "bounds")
+                popBounds.fromValue = startBounds
+                popBounds.toValue = finalBounds
+                popBounds.duration = popInDuration
+                popBounds.timingFunction = easeOutTiming
+
+                let popPosition = CABasicAnimation(keyPath: "position")
+                popPosition.fromValue = startPosition
+                popPosition.toValue = finalPosition
+                popPosition.duration = popInDuration
+                popPosition.timingFunction = easeOutTiming
+
+                container.add(popBounds, forKey: "popBounds")
+                container.add(popPosition, forKey: "popPosition")
+            }
             container.add(fadeIn, forKey: "fadeIn")
 
             container.bounds = finalBounds
@@ -263,50 +301,103 @@ final class GlowView: NSView {
             container.opacity = maxOpacity
             CATransaction.commit()
 
-            glowIsAlive = true
         }
 
-        // Update tracking
-        currentPosition = horizontalPosition
-        currentKeyWidth = keyWidth
+        surface.isAlive = true
+        surface.target = target
+    }
+
+    /// Refresh the visible identity without changing geometry, color, or
+    /// animation energy. Nonvisible identities are deliberately rejected.
+    @discardableResult
+    func refresh(_ id: GlowID) -> Bool {
+        guard activeTargets[id] != nil else { return false }
+        guard let surface = surfaces[id] else { return false }
+        let container = surface.layer
+        guard container.superlayer != nil,
+              surface.isAlive else {
+            return false
+        }
+
+        // Only intervene if something is wrong (e.g. a fade-out snuck in).
+        // Otherwise leave the layer alone to avoid disrupting animations.
+        if container.opacity != maxOpacity && container.animation(forKey: "fadeOut") != nil {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            container.removeAllAnimations()
+            container.opacity = maxOpacity
+            CATransaction.commit()
+            surface.fadeDelegate = nil
+        }
+        surface.isAlive = true
+        return true
     }
 
     /// Update the position of the glow instantly (for live preview during drag in key position editor)
-    func updateGlowPosition(at horizontalPosition: CGFloat, keyCode: UInt16, keyWidth: CGFloat) {
-        let container = ensureGlowLayer()
+    private func updatePreview(
+        _ target: GlowTarget,
+        on surface: ClassicGlowSurface
+    ) {
+        let container = surface.layer
+        redrawImmediately(target, in: container)
+        surface.fadeDelegate = nil
+        surface.isAlive = true
+        surface.target = target
+    }
 
-        // Cancel any animations for instant repositioning
+    /// Repaints the currently visible target after an atomic configuration
+    /// update. This deliberately does not call `show` or mutate held-key state:
+    /// target priority and retreat ordering belong to `OverlayController`.
+    private func refreshVisibleConfiguration() {
+        for id in activeTargetOrder {
+            guard let target = activeTargets[id],
+                  let surface = surfaces[id],
+                  surface.layer.superlayer != nil,
+                  surface.isAlive else {
+                continue
+            }
+
+            redrawImmediately(target, in: surface.layer)
+            surface.fadeDelegate = nil
+            surface.target = target
+        }
+    }
+
+    /// Applies the current pixels without introducing a new transition. This is
+    /// also the established behavior for the continuously tracking previews.
+    private func redrawImmediately(_ target: GlowTarget, in container: CALayer) {
+        let horizontalPosition = CGFloat(target.horizontalPosition)
+        let keyWidth = CGFloat(target.keyWidth)
+
+        // Cancel any animations so the complete configuration becomes visible
+        // as one transaction rather than mixing old geometry with new content.
         container.removeAllAnimations()
 
         let newFrame = computeFrame(for: horizontalPosition, keyWidth: keyWidth)
         let effectiveWidth = newFrame.width
         let flatHeight = flatGlowHeight
-        let perKeyColor: NSColor? = colorResolver?(horizontalPosition)
+        let perKeyColor = configuration.resolvedColorOverride(for: target)
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         container.frame = newFrame
         container.opacity = maxOpacity
-        updateGlowSublayers(container: container, width: effectiveWidth, height: flatHeight, color: perKeyColor)
+        updateGlowSublayers(
+            container: container,
+            width: effectiveWidth,
+            height: flatHeight,
+            color: perKeyColor
+        )
         CATransaction.commit()
-
-        glowIsAlive = true
-        currentPosition = horizontalPosition
-        currentKeyWidth = keyWidth
-        currentTargetKeyCode = keyCode
-        heldKeys.insert(keyCode)
     }
 
-    func hideGlow(keyCode: UInt16) {
-        heldKeys.remove(keyCode)
-        keyTimestamps.removeValue(forKey: keyCode)
-
-        // Only fade out when ALL keys are released
-        if !heldKeys.isEmpty {
-            return
-        }
-
-        guard let container = glowLayer, glowIsAlive else { return }
+    func hide(_ id: GlowID) {
+        guard let target = activeTargets.removeValue(forKey: id) else { return }
+        activeTargetOrder.removeAll { $0 == id }
+        refreshActiveChordOpacity()
+        guard let surface = surfaces[id], surface.isAlive else { return }
+        surface.target = target
+        let container = surface.layer
 
         // Capture the current visual opacity before touching animations
         let currentVisualOpacity = container.presentation()?.opacity ?? container.opacity
@@ -333,6 +424,7 @@ final class GlowView: NSView {
             container.bounds = presentationBounds
         }
         container.removeAllAnimations()
+        surface.fadeDelegate = nil
 
         // Start fade-out
         let fadeAnim = CABasicAnimation(keyPath: "opacity")
@@ -343,58 +435,162 @@ final class GlowView: NSView {
         fadeAnim.fillMode = .forwards
         fadeAnim.isRemovedOnCompletion = false
 
-        // Use delegate to reliably detect completion vs. cancellation
-        fadeAnim.delegate = FadeOutDelegate { [weak self] finished in
-            if finished {
-                self?.glowIsAlive = false
+        // Use a retained delegate to reliably distinguish natural completion
+        // from a surface being reused by a later key press.
+        let fadeDelegate = FadeOutDelegate { [weak self, weak surface] finished in
+            guard finished,
+                  let self,
+                  let surface,
+                  self.surfaces[id] === surface,
+                  self.activeTargets[id] == nil else {
+                return
             }
+            surface.isAlive = false
+            surface.fadeDelegate = nil
+            surface.layer.removeFromSuperlayer()
         }
+        surface.fadeDelegate = fadeDelegate
+        fadeAnim.delegate = fadeDelegate
 
         container.add(fadeAnim, forKey: "fadeOut")
         container.opacity = 0.0
 
         CATransaction.commit()
-
-        currentTargetKeyCode = nil
     }
 
-    // MARK: - Key State Management
+    /// Clears the rendered identity and all in-flight visual state.
+    func clear() {
+        activeTargets.removeAll(keepingCapacity: true)
+        activeTargetOrder.removeAll(keepingCapacity: true)
 
-    /// Removes keys from heldKeys that haven't been refreshed recently.
-    /// Protects against missed keyUp events (e.g., focus change, app switching).
-    private func purgeStaleKeys() {
-        let now = CACurrentMediaTime()
-        let staleKeys = heldKeys.filter { key in
-            guard let timestamp = keyTimestamps[key] else { return true }
-            return (now - timestamp) > staleKeyThreshold
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for surface in surfaces.values {
+            surface.layer.removeAllAnimations()
+            surface.layer.opacity = 0
+            surface.layer.removeFromSuperlayer()
+            surface.isAlive = false
+            surface.fadeDelegate = nil
         }
-        for key in staleKeys {
-            heldKeys.remove(key)
-            keyTimestamps.removeValue(forKey: key)
-        }
-    }
+        CATransaction.commit()
 
-    /// Clears all held key state. Call on wake from sleep or app reactivation
-    /// to prevent stale keys from blocking fade-out.
-    func clearHeldKeys() {
-        heldKeys.removeAll()
-        keyTimestamps.removeAll()
+        surfaces.removeAll(keepingCapacity: true)
+        surfaceOrder.removeAll(keepingCapacity: true)
     }
 
     // MARK: - Helpers
 
-    /// Lazily creates the single glow layer or returns the existing one
-    private func ensureGlowLayer() -> CALayer {
-        if let existing = glowLayer {
-            if existing.superlayer == nil {
-                layer?.addSublayer(existing)
+    private var activeChordMemberCount: Int {
+        activeTargets.keys.reduce(into: 0) { count, id in
+            switch id {
+            case .physicalKey:
+                count += 1
+            case .preview(let source) where source.isChordTest:
+                count += 1
+            case .preview:
+                break
+            }
+        }
+    }
+
+    /// Chord membership can change without a settings transaction. Update the
+    /// model opacity of every surviving identity immediately while preserving
+    /// its geometry and other in-flight animation state.
+    private func refreshActiveChordOpacity() {
+        let opacity = maxOpacity
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for id in activeTargetOrder {
+            guard let surface = surfaces[id], surface.isAlive else { continue }
+            surface.layer.removeAnimation(forKey: "fadeIn")
+            surface.layer.removeAnimation(forKey: "opacityRestore")
+            surface.layer.opacity = opacity
+        }
+        CATransaction.commit()
+    }
+
+    /// Returns the target's existing surface or reuses an inactive surface.
+    /// A still-visible retreat is reused only when no other target is active;
+    /// that retains Classic Glow's original sequential slide behavior without
+    /// stealing a layer from a physically held chord member.
+    private func surface(
+        for target: GlowTarget,
+        mayReuseVisibleRetreat: Bool
+    ) -> ClassicGlowSurface {
+        if let existing = surfaces[target.id] {
+            if activeTargets[target.id] == nil {
+                surfaceOrder.removeAll { $0 == target.id }
+                surfaceOrder.append(target.id)
+            }
+            if existing.layer.superlayer == nil {
+                layer?.addSublayer(existing.layer)
             }
             return existing
         }
+
+        let reusableID = surfaceOrder.reversed().first { candidateID in
+            guard activeTargets[candidateID] == nil,
+                  let candidate = surfaces[candidateID] else {
+                return false
+            }
+            return !candidate.isAlive || mayReuseVisibleRetreat
+        }
+
+        if let reusableID,
+           let reusable = surfaces.removeValue(forKey: reusableID) {
+            surfaceOrder.removeAll { $0 == reusableID }
+            reusable.id = target.id
+            reusable.target = target
+            surfaces[target.id] = reusable
+            surfaceOrder.append(target.id)
+            if reusable.layer.superlayer == nil {
+                layer?.addSublayer(reusable.layer)
+            }
+            return reusable
+        }
+
         let container = createEmptyGlowContainer()
         layer?.addSublayer(container)
-        glowLayer = container
-        return container
+        let created = ClassicGlowSurface(
+            id: target.id,
+            target: target,
+            layer: container
+        )
+        surfaces[target.id] = created
+        surfaceOrder.append(target.id)
+        return created
+    }
+
+    private func freezeGeometryAnimationsAtCurrentState() {
+        for surface in surfaces.values {
+            freezeGeometryAnimations(on: surface.layer)
+        }
+    }
+
+    private func freezeGeometryAnimations(on container: CALayer) {
+        let hasPositionAnimation =
+            container.animation(forKey: "slidePosition") != nil ||
+            container.animation(forKey: "popPosition") != nil
+        let hasBoundsAnimation =
+            container.animation(forKey: "slideBounds") != nil ||
+            container.animation(forKey: "popBounds") != nil
+
+        guard hasPositionAnimation || hasBoundsAnimation else { return }
+        let presentation = container.presentation()
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if hasPositionAnimation, let position = presentation?.position {
+            container.position = position
+        }
+        if hasBoundsAnimation, let bounds = presentation?.bounds {
+            container.bounds = bounds
+        }
+        container.removeAnimation(forKey: "slidePosition")
+        container.removeAnimation(forKey: "popPosition")
+        container.removeAnimation(forKey: "slideBounds")
+        container.removeAnimation(forKey: "popBounds")
+        CATransaction.commit()
     }
 
     /// Computes the frame rect for a glow at the given position and key width
@@ -609,14 +805,24 @@ final class GlowView: NSView {
     }
 
     private func refreshGlowLayerForDisplayScale() {
-        guard let container = glowLayer else { return }
-        let effectiveWidth = baseKeyWidth * currentKeyWidth * 2.5 * widthMultiplier
-        let perKeyColor: NSColor? = colorResolver?(currentPosition)
+        guard !surfaces.isEmpty else { return }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        applyRenderingQuality(to: container)
-        updateGlowSublayers(container: container, width: effectiveWidth, height: flatGlowHeight, color: perKeyColor)
+        for surface in surfaces.values where surface.layer.superlayer != nil {
+            let target = activeTargets[surface.id] ?? surface.target
+            let effectiveWidth = baseKeyWidth
+                * CGFloat(target.keyWidth)
+                * 2.5
+                * widthMultiplier
+            applyRenderingQuality(to: surface.layer)
+            updateGlowSublayers(
+                container: surface.layer,
+                width: effectiveWidth,
+                height: flatGlowHeight,
+                color: configuration.resolvedColorOverride(for: target)
+            )
+        }
         CATransaction.commit()
     }
 }

@@ -1,0 +1,4 @@
+#include "Shared.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = com.keylight.app
+DEAD_CODE_STRIPPING = YES

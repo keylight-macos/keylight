@@ -4,7 +4,6 @@ import CoreGraphics
 /// Maps macOS key codes to horizontal screen positions and widths
 /// Based on MacBook Air keyboard layout - keys projected to bottom screen edge
 /// Positions are normalized 0.0 (left edge) to 1.0 (right edge)
-@MainActor
 struct KeyMapping: Sendable {
 
     /// Key properties including position and width

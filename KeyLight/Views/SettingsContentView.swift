@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import Darwin
 
 private enum SettingsImportValidationError: LocalizedError {
     case notRegularFile
@@ -12,7 +13,7 @@ private enum SettingsImportValidationError: LocalizedError {
         case .notRegularFile:
             return "Selected item is not a regular file."
         case .fileTooLarge:
-            return "file too large (max 5MB)"
+            return "file too large (max 1MB)"
         case .fileSizeUnavailable:
             return "Could not determine file size."
         }
@@ -20,800 +21,659 @@ private enum SettingsImportValidationError: LocalizedError {
 }
 
 private func loadValidatedSettingsImportData(from url: URL, maxFileSize: Int) throws -> Data {
-    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-    guard settingsImportIsRegularFile(attributes: attributes) else {
-        throw SettingsImportValidationError.notRegularFile
+    let handle = try FileHandle(forReadingFrom: url)
+    defer {
+        try? handle.close()
     }
 
-    guard let sizeValue = attributes[.size],
-          let fileSize = settingsImportFileSizeInBytes(sizeValue),
-          fileSize >= 0 else {
+    var fileStatus = stat()
+    guard fstat(handle.fileDescriptor, &fileStatus) == 0 else {
         throw SettingsImportValidationError.fileSizeUnavailable
     }
-
-    if fileSize > Int64(maxFileSize) {
+    guard (fileStatus.st_mode & S_IFMT) == S_IFREG else {
+        throw SettingsImportValidationError.notRegularFile
+    }
+    guard fileStatus.st_size >= 0 else {
+        throw SettingsImportValidationError.fileSizeUnavailable
+    }
+    if fileStatus.st_size > Int64(maxFileSize) {
         throw SettingsImportValidationError.fileTooLarge
     }
 
-    return try Data(contentsOf: url)
-}
-
-private func settingsImportIsRegularFile(attributes: [FileAttributeKey: Any]) -> Bool {
-    if let fileType = attributes[.type] as? FileAttributeType {
-        return fileType == .typeRegular
+    let data = try handle.read(upToCount: maxFileSize + 1) ?? Data()
+    guard data.count <= maxFileSize else {
+        throw SettingsImportValidationError.fileTooLarge
     }
-    if let fileType = attributes[.type] as? String {
-        return fileType == FileAttributeType.typeRegular.rawValue
-    }
-    return false
-}
-
-private func settingsImportFileSizeInBytes(_ value: Any) -> Int64? {
-    switch value {
-    case let number as NSNumber:
-        return number.int64Value
-    case let intValue as Int:
-        return Int64(intValue)
-    case let int64Value as Int64:
-        return int64Value
-    case let uintValue as UInt:
-        return Int64(exactly: uintValue)
-    case let uint64Value as UInt64:
-        return uint64Value <= UInt64(Int64.max) ? Int64(uint64Value) : nil
-    case let stringValue as String:
-        return Int64(stringValue)
-    default:
-        return nil
-    }
+    return data
 }
 
 struct SettingsView: View {
-    @EnvironmentObject var appState: AppState
+    @Bindable var model: KeyLightModel
+    @Environment(\.openWindow) var openWindow
+    let settings: SettingsManager
+    @ObservedObject var keyLayoutStore: KeyLayoutStore
+    let updateService: UpdateService
 
-    @State private var hexColor: String = "68B8FF"
-    @State private var hasPermission: Bool = false
-    @State private var isUpdatingColor = false
-    @State private var gradientPresets: [SettingsManager.GradientPreset] = []
-    @State private var savedThemes: [SettingsManager.Theme] = []
-    @State private var savedLayoutProfiles: [SettingsManager.KeyMappingProfile] = []
-    @State private var currentThemeName: String = "current"
-    @State private var currentLayoutProfileName: String = "None"
-    @State private var showingThemeSaveField = false
-    @State private var newThemeName: String = ""
-    @State private var showingLayoutSaveField = false
-    @State private var newLayoutProfileName: String = ""
-    @State private var editingThemeID: UUID?
-    @State private var themeRenameDraft: String = ""
-    @State private var themeRenameError: String?
-    @State private var editingLayoutProfileID: UUID?
-    @State private var layoutRenameDraft: String = ""
-    @State private var layoutRenameError: String?
-    @State private var themeTransferStatus: String = ""
-    @State private var themeTransferString: String = ""
-    @State private var layoutTransferStatus: String = ""
-    @State private var hoveredThemeID: UUID?
-    @State private var hoveredLayoutProfileID: UUID?
+    @State var hexColor: String = "68B8FF"
+    @State var isUpdatingColor = false
+    @State var gradientPresets: [GradientPreset] = []
+    @State private var selectedSettingsTab: SettingsTab = .appearance
+    @State var showingThemeSaveField = false
+    @State var newThemeName: String = ""
+    @State var showingLayoutSaveField = false
+    @State var newLayoutProfileName: String = ""
+    @State var editingThemeID: UUID?
+    @State var themeRenameDraft: String = ""
+    @State var themeRenameError: String?
+    @State var editingLayoutProfileID: UUID?
+    @State var layoutRenameDraft: String = ""
+    @State var layoutRenameError: String?
+    @State var themeTransferFeedback: UserFeedback?
+    @State var themeTransferString: String = ""
+    @State var themeTransferMode: ThemeTransferMode?
+    @State var layoutTransferFeedback: UserFeedback?
+    @State var screenCaptureAccessGranted = ScreenCaptureAuthorization.isGranted
     @State private var settingsScrollView: NSScrollView?
+    @State private var settingsPreviewSession: SettingsGlowPreviewSession
+    @State var chordPreviewActive = false
+    @State var chordPreviewTask: Task<Void, Never>?
+    @State var configurationSnapshots: [ConfigurationSnapshotDocument] = []
+    @State var newConfigurationSnapshotName = ""
+    @State var editingConfigurationSnapshotID: UUID?
+    @State var configurationSnapshotRenameDraft = ""
+    @State var configurationSnapshotRenameError: String?
+    @State var snapshotConfirmation: SnapshotConfirmation?
+    @State var snapshotFilePanelHelper =
+        ConfigurationSnapshotFilePanelHelper()
 
-    @State private var pendingDeletions: [PendingDeletionID: PendingDeletionState] = [:]
+    @State var pendingDeletions: [PendingDeletionID: PendingDeletionState] = [:]
     @State private var pendingDeletionTasks: [PendingDeletionID: Task<Void, Never>] = [:]
+    @State private var deletionConfirmation: PendingDeletionConfirmation?
 
-    private let inlineUndoSeconds = 5
-    private let maxLayoutImportFileSize = 5_000_000
+    private let inlineUndoSeconds = 10
+    private let maxLayoutImportFileSize = PersistenceValidation.maximumLayoutImportSize
 
-    private enum PendingDeletionID: Hashable {
+    init(
+        model: KeyLightModel,
+        settings: SettingsManager,
+        keyLayoutStore: KeyLayoutStore,
+        updateService: UpdateService
+    ) {
+        self.model = model
+        self.settings = settings
+        self.updateService = updateService
+        _keyLayoutStore = ObservedObject(wrappedValue: keyLayoutStore)
+        _settingsPreviewSession = State(initialValue: SettingsGlowPreviewSession(
+            show: { [weak model] in
+                model?.setPreview(
+                    .preview(
+                        .settings,
+                        horizontalPosition: 0.5,
+                        keyWidth: 1
+                    ),
+                    source: .settings
+                )
+            },
+            hide: { [weak model] in
+                model?.clearPreview(.settings)
+            }
+        ))
+    }
+
+    private enum SettingsTab: Hashable {
+        case appearance
+        case keyboard
+        case snapshots
+        case general
+    }
+
+    enum PendingDeletionID: Hashable {
         case theme(UUID)
         case layout(UUID)
+        case configurationSnapshot(UUID)
     }
 
-    private enum PendingDeletionKind {
-        case theme(item: SettingsManager.Theme)
-        case layout(item: SettingsManager.KeyMappingProfile)
+    enum PendingDeletionKind {
+        case theme(item: Theme, wasActive: Bool)
+        case layout(item: KeyMappingProfile, wasActive: Bool)
+        case configurationSnapshot(
+            item: ConfigurationSnapshotDocument,
+            index: Int
+        )
     }
 
-    private struct PendingDeletionState {
+    struct PendingDeletionState {
         let deletion: PendingDeletionKind
         var secondsRemaining: Int
     }
 
-    private var selectedGradientPresetID: UUID? {
-        let currentStart = appState.gradientStartColor.toHex()?.uppercased()
-        let currentEnd = appState.gradientEndColor.toHex()?.uppercased()
+    struct PendingDeletionConfirmation: Identifiable {
+        let id = UUID()
+        let deletion: PendingDeletionKind
+
+        var title: String {
+            switch deletion {
+            case .theme(let item, _):
+                return String(localized: "Delete Theme \"\(item.name)\"?")
+            case .layout(let item, _):
+                return String(localized: "Delete Layout \"\(item.name)\"?")
+            case .configurationSnapshot(let item, _):
+                return String(
+                    localized: "Delete Snapshot \"\(item.name)\"?"
+                )
+            }
+        }
+
+        var message: String {
+            String(localized: "This removes the saved item. You can undo for ten seconds.")
+        }
+    }
+
+    enum SnapshotConfirmation: Identifiable {
+        case apply(ConfigurationSnapshotDocument)
+        case importConflict(ConfigurationSnapshotDocument)
+        case restorePrevious
+
+        var id: String {
+            switch self {
+            case .apply(let document):
+                return "apply-\(document.id.uuidString)"
+            case .importConflict(let document):
+                return "import-\(document.id.uuidString)"
+            case .restorePrevious:
+                return "restore-previous"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .apply(let document):
+                return String(localized: "Apply \"\(document.name)\"?")
+            case .importConflict(let document):
+                return String(
+                    localized: "A Snapshot Named \"\(document.name)\" Exists"
+                )
+            case .restorePrevious:
+                return String(localized: "Restore Previous Setup?")
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .apply:
+                return String(
+                    localized: "KeyLight will replace its managed appearance, layout, display routing, and shortcut settings. Restore Previous Setup can reverse it."
+                )
+            case .importConflict:
+                return String(
+                    localized: "Replace the saved snapshot or keep both by saving a numbered copy. Importing does not apply it."
+                )
+            case .restorePrevious:
+                return String(
+                    localized: "KeyLight will swap the current managed setup with the hidden recovery setup. You can use this button again to swap back."
+                )
+            }
+        }
+    }
+
+    private struct EffectPreviewConfiguration: Equatable {
+        let effectStyle: EffectStyle
+        let shapeProfile: SurfaceShapeProfile
+        let colorMode: ColorMode
+        let glowColorHex: String?
+        let gradientStartHex: String?
+        let gradientEndHex: String?
+        let opacity: Double
+        let height: Double
+        let width: Double
+        let roundness: Double
+        let fullness: Double
+        let fadeDuration: Double
+    }
+
+    var selectedGradientPresetID: UUID? {
+        let currentStart = model.gradientStartColor.toHex()?.uppercased()
+        let currentEnd = model.gradientEndColor.toHex()?.uppercased()
         return gradientPresets.first(where: { preset in
             preset.startHex.uppercased() == currentStart && preset.endHex.uppercased() == currentEnd
         })?.id
     }
 
-    private var activeLayoutProfile: SettingsManager.KeyMappingProfile? {
-        savedLayoutProfiles.first(where: { $0.name == currentLayoutProfileName })
+    var activeLayoutProfile: KeyMappingProfile? {
+        keyLayoutStore.selectedProfile
+    }
+
+    var activeTheme: Theme? {
+        model.selectedTheme
+    }
+
+    var activeThemeIsEdited: Bool {
+        model.selectedThemeIsEdited
+    }
+
+    var activeLayoutIsEdited: Bool {
+        keyLayoutStore.selectedProfileIsEdited
+    }
+
+    var savedThemes: [Theme] { model.savedThemes }
+    var savedLayoutProfiles: [KeyMappingProfile] { keyLayoutStore.savedProfiles }
+    var bundledLayoutPresets: [SettingsManager.BundledLayoutPreset] {
+        settings.bundledLayoutPresets()
+    }
+    var currentThemeID: UUID? { model.selectedThemeID }
+    var currentLayoutProfileID: UUID? { keyLayoutStore.selectedProfileID }
+
+    var buildIdentity: KeyLightBuildIdentity {
+        KeyLightApplicationIdentity.current
+    }
+
+    var appVersionDescription: String {
+        buildIdentity.versionDescription
+    }
+
+    var colorModeAccessibilityValue: String {
+        switch model.colorMode {
+        case .solid: return "Solid"
+        case .positionGradient: return "Position Gradient"
+        case .randomPerKey: return "Random Per Key"
+        case .rainbow: return "Rainbow"
+        }
+    }
+
+    var roundnessAccessibilityValue: String {
+        if model.glowRoundness < 0.05 { return "Sharp" }
+        if model.glowRoundness > 0.95 { return "Round" }
+        return "\(Int(model.glowRoundness * 100)) percent"
+    }
+
+    var liquidGlassSmoothnessAccessibilityValue: String {
+        if model.glowRoundness < 0.05 { return "Compact" }
+        if model.glowRoundness > 0.95 { return "Wide and soft" }
+        return "\(Int(model.glowRoundness * 100)) percent"
+    }
+
+    var hotKeyStatusTitle: String {
+        switch model.globalHotKeyStatus {
+        case .checking: return "Checking \(model.globalShortcut.displayName)"
+        case .registered: return "\(model.globalShortcut.displayName) Registered"
+        case .unavailable: return "\(model.globalShortcut.displayName) Unavailable"
+        }
+    }
+
+    var hotKeyStatusIcon: String {
+        switch model.globalHotKeyStatus {
+        case .checking: return "clock"
+        case .registered: return "checkmark.circle.fill"
+        case .unavailable: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    var hotKeyStatusColor: Color {
+        switch model.globalHotKeyStatus {
+        case .checking: return .secondary
+        case .registered: return .green
+        case .unavailable: return .orange
+        }
+    }
+
+    @ViewBuilder
+    private var permissionWarning: some View {
+        if model.inputMonitoringInstallationIssue != nil ||
+            model.inputMonitoringState == .permissionRequired ||
+            model.inputMonitoringState == .monitorUnavailable {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                Text("Input Monitoring needs attention before KeyLight can detect keys reliably.")
+                    .font(.callout)
+                Spacer(minLength: 8)
+                if selectedSettingsTab != .general {
+                    Button("Review") {
+                        selectedSettingsTab = .general
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(10)
+            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Input Monitoring needs attention")
+        }
+    }
+
+    var liquidGlassRuntimeAvailable: Bool {
+        EffectStyle.liquidGlass.isAvailableOnCurrentSystem
+    }
+
+    private var resolvedEffectStyle: EffectStyle {
+        model.effectStyle.resolvedForCurrentSystem
+    }
+
+    private var effectPreviewConfiguration: EffectPreviewConfiguration {
+        EffectPreviewConfiguration(
+            effectStyle: model.effectStyle,
+            shapeProfile: model.surfaceShapeProfile,
+            colorMode: model.colorMode,
+            glowColorHex: model.glowColor.toHex(),
+            gradientStartHex: model.gradientStartColor.toHex(),
+            gradientEndHex: model.gradientEndColor.toHex(),
+            opacity: model.glowOpacity,
+            height: model.glowSize,
+            width: model.glowWidth,
+            roundness: model.glowRoundness,
+            fullness: model.glowFullness,
+            fadeDuration: model.fadeDuration
+        )
     }
 
     var body: some View {
+        TabView(selection: $selectedSettingsTab) {
+            settingsPage(.appearance)
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+                .tag(SettingsTab.appearance)
+
+            settingsPage(.keyboard)
+                .tabItem { Label("Keyboard Layout", systemImage: "keyboard") }
+                .tag(SettingsTab.keyboard)
+
+            settingsPage(.snapshots)
+                .tabItem {
+                    Label("Snapshots", systemImage: "square.stack.3d.up")
+                }
+                .tag(SettingsTab.snapshots)
+
+            settingsPage(.general)
+                .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
+
+        }
+        .frame(minWidth: 640, minHeight: 580)
+        .sheet(item: $themeTransferMode) { mode in
+            ThemeTransferSheet(
+                mode: mode,
+                transferString: $themeTransferString,
+                feedback: $themeTransferFeedback,
+                onCopy: copyThemeStringToClipboard,
+                onImport: {
+                    if importThemeString(themeTransferString) {
+                        themeTransferMode = nil
+                    }
+                }
+            )
+        }
+        .alert(item: $deletionConfirmation) { confirmation in
+            Alert(
+                title: Text(confirmation.title),
+                message: Text(confirmation.message),
+                primaryButton: .destructive(Text("Delete")) {
+                    confirmDeletion(confirmation.deletion)
+                },
+                secondaryButton: .cancel()
+            )
+        }
+        .confirmationDialog(
+            snapshotConfirmation?.title ?? "",
+            isPresented: Binding(
+                get: { snapshotConfirmation != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        snapshotConfirmation = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            switch snapshotConfirmation {
+            case .apply(let document):
+                Button("Apply Snapshot") {
+                    applyConfigurationSnapshot(document)
+                    snapshotConfirmation = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    snapshotConfirmation = nil
+                }
+            case .importConflict(let document):
+                Button("Replace") {
+                    storeImportedConfigurationSnapshot(
+                        document,
+                        policy: .replace
+                    )
+                    snapshotConfirmation = nil
+                }
+                Button("Save Copy") {
+                    storeImportedConfigurationSnapshot(
+                        document,
+                        policy: .saveCopy
+                    )
+                    snapshotConfirmation = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    snapshotConfirmation = nil
+                }
+            case .restorePrevious:
+                Button("Restore Previous Setup") {
+                    restorePreviousConfigurationSnapshot()
+                    snapshotConfirmation = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    snapshotConfirmation = nil
+                }
+            case nil:
+                EmptyView()
+            }
+        } message: {
+            Text(snapshotConfirmation?.message ?? "")
+        }
+        .onAppear {
+            hexColor = model.glowColor.toHex() ?? "68B8FF"
+            screenCaptureAccessGranted = ScreenCaptureAuthorization.isGranted
+            reloadPersistedState()
+        }
+        .onChange(of: effectPreviewConfiguration) { _, _ in
+            requestSettingsPreview()
+        }
+        .onChange(of: model.isEnabled) { _, isEnabled in
+            if !isEnabled {
+                stopSettingsPreview()
+            }
+        }
+        .onChange(of: selectedSettingsTab) { _, selectedTab in
+            if selectedTab != .keyboard {
+                stopChordPreviewTest()
+            }
+        }
+        .onChange(of: themeTransferFeedback) { _, feedback in
+            if let feedback {
+                model.announce(feedback)
+            }
+        }
+        .onChange(of: layoutTransferFeedback) { _, feedback in
+            if let feedback {
+                model.announce(feedback)
+            }
+        }
+        .onDisappear {
+            stopSettingsPreview()
+            stopChordPreviewTest()
+        }
+    }
+
+    @ViewBuilder
+    private func settingsPage(_ tab: SettingsTab) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("KeyLight")
-                        .font(.title2)
-                        .bold()
-                    Spacer()
-                    Text("⌘⇧K")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.15)))
-                    Toggle("", isOn: $appState.isEnabled)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+                permissionWarning
+
+                if let feedback = model.feedback {
+                    SettingsFeedbackBanner(
+                        feedback: feedback,
+                        onRecovery: { handleFeedbackRecovery(feedback.recoveryAction) },
+                        onDismiss: { model.feedback = nil }
+                    )
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Color Mode")
-                        .font(.headline)
-                    Picker("", selection: $appState.colorMode) {
-                        Text("Solid").tag(SettingsManager.ColorMode.solid)
-                        Text("Position Gradient").tag(SettingsManager.ColorMode.positionGradient)
-                        Text("Random Per Key").tag(SettingsManager.ColorMode.randomPerKey)
-                        Text("Rainbow").tag(SettingsManager.ColorMode.rainbow)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
-                if appState.colorMode == .solid {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Color")
-                            .font(.headline)
-                        HStack(spacing: 12) {
-                            ColorPicker("Glow Color", selection: $appState.glowColor, supportsOpacity: false)
-                                .labelsHidden()
-                                .frame(width: 44, height: 28)
-
-                            HStack(spacing: 4) {
-                                Text("#")
-                                    .foregroundColor(.secondary)
-                                TextField("Hex", text: $hexColor)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 70)
-                                    .onChange(of: hexColor) { _, newValue in
-                                        guard !isUpdatingColor else { return }
-                                        isUpdatingColor = true
-                                        defer { isUpdatingColor = false }
-                                        if let color = Color(hex: newValue) {
-                                            appState.glowColor = color
-                                        }
-                                    }
-                            }
-
-                            HStack(spacing: 6) {
-                                ColorPresetButton(color: Color(hex: "68B8FF") ?? .blue, appState: appState, hexColor: $hexColor)
-                                ColorPresetButton(color: Color(hex: "00E69A") ?? .green, appState: appState, hexColor: $hexColor)
-                                ColorPresetButton(color: Color(hex: "FF6B6B") ?? .red, appState: appState, hexColor: $hexColor)
-                                ColorPresetButton(color: Color(hex: "FFD93D") ?? .yellow, appState: appState, hexColor: $hexColor)
-                                ColorPresetButton(color: Color(hex: "C77DFF") ?? .purple, appState: appState, hexColor: $hexColor)
-                            }
-                        }
-                        .onChange(of: appState.glowColor) { _, newColor in
-                            guard !isUpdatingColor else { return }
-                            isUpdatingColor = true
-                            defer { isUpdatingColor = false }
-                            hexColor = newColor.toHex() ?? "68B8FF"
-                        }
-                    }
-                }
-
-                if appState.colorMode == .positionGradient {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Gradient Colors")
-                            .font(.headline)
-
-                        HStack(spacing: 16) {
-                            VStack(spacing: 4) {
-                                Text("Start")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                ColorPicker("Gradient Start", selection: $appState.gradientStartColor, supportsOpacity: false)
-                                    .labelsHidden()
-                                    .frame(width: 44, height: 28)
-                            }
-
-                            LinearGradient(
-                                colors: [appState.gradientStartColor, appState.gradientEndColor],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                            .frame(height: 12)
-                            .cornerRadius(6)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.primary.opacity(0.2), lineWidth: 1)
-                            )
-
-                            VStack(spacing: 4) {
-                                Text("End")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                ColorPicker("Gradient End", selection: $appState.gradientEndColor, supportsOpacity: false)
-                                    .labelsHidden()
-                                    .frame(width: 44, height: 28)
-                            }
-                        }
-
-                        HStack {
-                            Text("Presets")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Button("Delete Selected") {
-                                deleteSelectedGradientPreset()
-                            }
-                            .font(.caption)
-                            .disabled(selectedGradientPresetID == nil || gradientPresets.count <= 1)
-                            Button("Add Gradient Colors") {
-                                saveCurrentGradientPreset()
-                            }
-                            .font(.caption)
-                        }
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(gradientPresets) { preset in
-                                    GradientPresetButton(startHex: preset.startHex, endHex: preset.endHex, appState: appState)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if appState.colorMode == .randomPerKey {
-                    Text("Each key uses a deterministic random color derived from its key code.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                if appState.colorMode == .rainbow {
-                    Text("Colors are distributed left-to-right by key position.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Effect Settings")
-                        .font(.headline)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Opacity")
-                            Spacer()
-                            Text("\(Int(appState.glowOpacity * 100))%")
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $appState.glowOpacity, in: 0.05...1.0)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Height")
-                            Spacer()
-                            Text("\(Int(appState.glowSize))")
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $appState.glowSize, in: 30...200)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Width")
-                            Spacer()
-                            Text("\(Int(appState.glowWidth * 100))%")
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $appState.glowWidth, in: 0.3...3.0)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Roundness")
-                            Spacer()
-                            Text(appState.glowRoundness < 0.05 ? "Sharp" : appState.glowRoundness > 0.95 ? "Round" : "\(Int(appState.glowRoundness * 100))%")
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $appState.glowRoundness, in: 0.0...1.0)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Hardness")
-                            Spacer()
-                            Text("\(Int(appState.glowFullness * 100))%")
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $appState.glowFullness, in: 0.0...1.0)
-                        Text("Controls glow boundary feather (0% soft, 100% crisp).")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Fade Duration")
-                            Spacer()
-                            Text("\(String(format: "%.2f", appState.fadeDuration))s")
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $appState.fadeDuration, in: 0.05...2.0)
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Themes")
-                        .font(.headline)
-
-                    Text("Themes store glow style settings only (color, effect, and fade).")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    if savedThemes.isEmpty {
-                        Text("No saved themes yet.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    } else {
-                        ForEach(savedThemes) { theme in
-                            let isActive = currentThemeName == theme.name
-                            let pendingID = PendingDeletionID.theme(theme.id)
-                            let pendingState = pendingDeletions[pendingID]
-                            let isHovered = hoveredThemeID == theme.id
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 8) {
-                                    if editingThemeID == theme.id {
-                                        TextField("Theme name", text: $themeRenameDraft)
-                                            .textFieldStyle(.roundedBorder)
-                                            .onChange(of: themeRenameDraft) { _, _ in
-                                                themeRenameError = nil
-                                            }
-                                        Spacer(minLength: 10)
-
-                                        Button("Save") {
-                                            saveThemeRename(theme)
-                                        }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                        .disabled(themeRenameValidation(for: theme) != nil)
-
-                                        Button("Cancel") {
-                                            cancelThemeRename()
-                                        }
-                                        .controlSize(.small)
-                                    } else {
-                                        Text(theme.name)
-                                            .font(.subheadline)
-                                            .lineLimit(1)
-                                        if isActive {
-                                            activeBadge()
-                                        }
-
-                                        if theme.name != SettingsManager.Theme.defaultTheme.name && isHovered {
-                                            Button {
-                                                startThemeRename(theme)
-                                            } label: {
-                                                Image(systemName: "square.and.pencil")
-                                                    .font(.system(size: 13, weight: .semibold))
-                                            }
-                                            .buttonStyle(.borderless)
-                                            .help("Rename theme")
-                                        }
-
-                                        Spacer(minLength: 0)
-
-                                        if let pendingState {
-                                            Button("Undo (\(pendingState.secondsRemaining)s)") {
-                                                cancelPendingDeletion(for: pendingID)
-                                            }
-                                            .buttonStyle(.borderedProminent)
-                                            .controlSize(.small)
-                                        } else if theme.name != SettingsManager.Theme.defaultTheme.name && isHovered {
-                                            Button {
-                                                queueThemeDeletion(theme)
-                                            } label: {
-                                                Image(systemName: "trash")
-                                                    .foregroundColor(.red)
-                                            }
-                                            .buttonStyle(.borderless)
-                                        }
-                                    }
-                                }
-                                .frame(minHeight: 30)
-
-                                if editingThemeID == theme.id,
-                                   let error = themeRenameError ?? themeRenameValidation(for: theme) {
-                                    Text(error)
-                                        .font(.caption2)
-                                        .foregroundColor(.red)
-                                        .padding(.leading, 24)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.03))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(
-                                        isActive ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.2),
-                                        lineWidth: 1
-                                    )
-                            )
-                            .contentShape(Rectangle())
-                            .gesture(
-                                TapGesture().onEnded {
-                                    guard editingThemeID == nil else { return }
-                                    selectTheme(theme, isActive: isActive)
-                                },
-                                including: .gesture
-                            )
-                            .onHover { hovering in
-                                hoveredThemeID = hovering ? theme.id : (hoveredThemeID == theme.id ? nil : hoveredThemeID)
-                            }
-                            .padding(.vertical, 0.5)
-                        }
-                    }
-
-                    if showingThemeSaveField {
-                        HStack {
-                            TextField("Theme name", text: $newThemeName)
-                                .textFieldStyle(.roundedBorder)
-
-                            Button("Save") {
-                                let trimmed = trimmed(newThemeName)
-                                guard !trimmed.isEmpty else { return }
-                                var theme = appState.currentTheme()
-                                theme.name = trimmed
-                                SettingsManager.shared.saveTheme(theme)
-                                SettingsManager.shared.currentThemeName = trimmed
-                                reloadPersistedState()
-                                showingThemeSaveField = false
-                                newThemeName = ""
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(trimmed(newThemeName).isEmpty)
-
-                            Button("Cancel") {
-                                showingThemeSaveField = false
-                                newThemeName = ""
+                ForEach(Array(pendingDeletions.keys), id: \.self) { id in
+                    if let pending = pendingDeletions[id] {
+                        HStack(spacing: 10) {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                .foregroundStyle(.orange)
+                                .accessibilityHidden(true)
+                            Text(deletedItemDescription(pending.deletion))
+                                .font(.callout)
+                            Spacer(minLength: 8)
+                            Button("Undo (\(pending.secondsRemaining)s)") {
+                                cancelPendingDeletion(for: id)
                             }
                             .controlSize(.small)
                         }
-                    } else {
-                        HStack {
-                            Button("Save Current...") {
-                                showingThemeSaveField = true
-                            }
-                            .controlSize(.small)
-
-                            Spacer()
-
-                            Button("Copy Theme String") {
-                                copyThemeStringToClipboard()
-                            }
-                            .controlSize(.small)
-
-                            Button("Import") {
-                                importThemeString(themeTransferString)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(trimmed(themeTransferString).isEmpty)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Theme String")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        TextEditor(text: $themeTransferString)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(height: 78)
-                            .padding(4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.primary.opacity(0.2), lineWidth: 1)
-                            )
-                    }
-
-                    if !themeTransferStatus.isEmpty {
-                        Text(themeTransferStatus)
-                            .font(.caption2)
-                            .foregroundColor(isStatusError(themeTransferStatus) ? .red : .secondary)
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Key Layout (Position + Width)")
-                        .font(.headline)
-
-                    Text("Key layout profiles store keyboard geometry only: per-key offsets and per-key glow width overrides.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    ForEach(savedLayoutProfiles) { profile in
-                        let isActive = currentLayoutProfileName == profile.name
-                        let pendingID = PendingDeletionID.layout(profile.id)
-                        let pendingState = pendingDeletions[pendingID]
-                        let isHovered = hoveredLayoutProfileID == profile.id
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 8) {
-                                if editingLayoutProfileID == profile.id {
-                                    TextField("Layout profile name", text: $layoutRenameDraft)
-                                        .textFieldStyle(.roundedBorder)
-                                        .onChange(of: layoutRenameDraft) { _, _ in
-                                            layoutRenameError = nil
-                                        }
-                                    Spacer(minLength: 10)
-
-                                    Button("Save") {
-                                        saveLayoutProfileRename(profile)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                    .disabled(layoutRenameValidation(for: profile) != nil)
-
-                                    Button("Cancel") {
-                                        cancelLayoutProfileRename()
-                                    }
-                                    .controlSize(.small)
-                                } else {
-                                    Text(profile.name)
-                                        .font(.subheadline)
-                                        .lineLimit(1)
-                                    if isActive {
-                                        activeBadge()
-                                    }
-
-                                    if isHovered {
-                                        Button {
-                                            startLayoutProfileRename(profile)
-                                        } label: {
-                                            Image(systemName: "square.and.pencil")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .help("Rename layout profile")
-                                    }
-
-                                    Spacer(minLength: 0)
-
-                                    if let pendingState {
-                                        Button("Undo (\(pendingState.secondsRemaining)s)") {
-                                            cancelPendingDeletion(for: pendingID)
-                                        }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                    } else if isHovered {
-                                        Button {
-                                            queueLayoutDeletion(profile)
-                                        } label: {
-                                            Image(systemName: "trash")
-                                                .foregroundColor(.red)
-                                        }
-                                        .buttonStyle(.borderless)
-                                    }
-                                }
-                            }
-                            .frame(minHeight: 30)
-
-                            if editingLayoutProfileID == profile.id,
-                               let error = layoutRenameError ?? layoutRenameValidation(for: profile) {
-                                Text(error)
-                                    .font(.caption2)
-                                    .foregroundColor(.red)
-                                    .padding(.leading, 24)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .padding(10)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.03))
+                            .orange.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(
-                                    isActive ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.2),
-                                    lineWidth: 1
-                                )
-                        )
-                        .contentShape(Rectangle())
-                        .gesture(
-                            TapGesture().onEnded {
-                                guard editingLayoutProfileID == nil else { return }
-                                selectLayoutProfile(profile, isActive: isActive)
-                            },
-                            including: .gesture
-                        )
-                        .onHover { hovering in
-                            hoveredLayoutProfileID = hovering ? profile.id : (hoveredLayoutProfileID == profile.id ? nil : hoveredLayoutProfileID)
-                        }
-                        .padding(.vertical, 0.5)
-                    }
-
-                    if showingLayoutSaveField {
-                        HStack {
-                            TextField("Layout profile name", text: $newLayoutProfileName)
-                                .textFieldStyle(.roundedBorder)
-
-                            Button("Save") {
-                                let trimmed = trimmed(newLayoutProfileName)
-                                guard !trimmed.isEmpty else { return }
-                                let profile = SettingsManager.KeyMappingProfile(
-                                    name: trimmed,
-                                    keyOffsets: KeyPositionManager.shared.keyOffsets,
-                                    keyWidthOverrides: KeyWidthManager.shared.keyWidthOverrides
-                                )
-                                SettingsManager.shared.saveKeyMappingProfile(profile)
-                                reloadPersistedState()
-                                showingLayoutSaveField = false
-                                newLayoutProfileName = ""
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(trimmed(newLayoutProfileName).isEmpty)
-
-                            Button("Cancel") {
-                                showingLayoutSaveField = false
-                                newLayoutProfileName = ""
-                            }
-                            .controlSize(.small)
-                        }
-                    } else {
-                        HStack {
-                            Button("Save Current...") {
-                                showingLayoutSaveField = true
-                            }
-                            .controlSize(.small)
-
-                            Spacer()
-
-                            Button("Export Active") {
-                                exportActiveLayoutProfile()
-                            }
-                            .controlSize(.small)
-                            .disabled(activeLayoutProfile == nil)
-
-                            Button("Import") {
-                                importLayoutProfile()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
-                    }
-
-                    HStack {
-                        Button("Adjust Key Positions...") {
-                            NotificationCenter.default.post(name: .openKeyPositionEditor, object: nil)
-                        }
-                        .buttonStyle(.link)
-                    }
-
-                    if !layoutTransferStatus.isEmpty {
-                        Text(layoutTransferStatus)
-                            .font(.caption2)
-                            .foregroundColor(isStatusError(layoutTransferStatus) ? .red : .secondary)
+                        .accessibilityElement(children: .contain)
                     }
                 }
 
-                Divider()
 
-                Toggle("Launch at Login", isOn: $appState.launchAtLogin)
-
-                HStack {
-                    Circle()
-                        .fill(hasPermission ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                        .accessibilityLabel("Permission: \(hasPermission ? "Granted" : "Required")")
-                    Text(hasPermission ? "Input Monitoring enabled" : "Input Monitoring required")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button("Open Settings") {
-                        PermissionManager.shared.openInputMonitoringSettings()
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                switch tab {
+                case .appearance:
+                    appearanceTabContent
+                case .keyboard:
+                    keyboardTabContent
+                case .snapshots:
+                    snapshotsTabContent
+                case .general:
+                    generalTabContent
                 }
             }
             .padding(20)
             .background(
                 SettingsScrollViewBridge { scrollView in
-                    if settingsScrollView !== scrollView {
+                    if selectedSettingsTab == tab, settingsScrollView !== scrollView {
                         settingsScrollView = scrollView
                     }
                 }
             )
         }
-        .frame(minWidth: 460, minHeight: 520)
-        .onAppear {
-            hexColor = appState.glowColor.toHex() ?? "68B8FF"
-            hasPermission = PermissionManager.shared.hasInputMonitoringPermission()
-            reloadPersistedState()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .permissionStatusChanged)) { _ in
-            hasPermission = PermissionManager.shared.hasInputMonitoringPermission()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .settingsStorageChanged)) { _ in
-            reloadPersistedState()
-        }
-        .onDisappear {
-            clearPendingDeletionState()
-        }
     }
 
-    private func saveCurrentGradientPreset() {
-        let startHex = appState.gradientStartColor.toHex() ?? "68B8FF"
-        let endHex = appState.gradientEndColor.toHex() ?? "00E69A"
-        SettingsManager.shared.saveGradientPreset(startHex: startHex, endHex: endHex)
-        gradientPresets = SettingsManager.shared.savedGradientPresets
+    func settingsPreviewEditingChanged(_ isEditing: Bool) {
+        settingsPreviewSession.editingChanged(
+            isEditing,
+            isEnabled: model.isEnabled
+        )
+    }
+
+    private func handleFeedbackRecovery(_ action: UserFeedback.RecoveryAction?) {
+        guard let action else { return }
+        switch action {
+        case .checkAgain, .retry:
+            model.retryInputMonitoring()
+        case .openInputMonitoringSettings:
+            model.openInputMonitoringSettings()
+        case .undo:
+            // Undo feedback is owned by the operation that created it. Settings
+            // does not invent a generic undo target.
+            break
+        }
+        model.feedback = nil
+    }
+
+    private func requestSettingsPreview() {
+        settingsPreviewSession.configurationChanged(isEnabled: model.isEnabled)
+    }
+
+    func stopSettingsPreview() {
+        settingsPreviewSession.stop()
+    }
+
+    func saveCurrentGradientPreset() {
+        let startHex = model.gradientStartColor.toHex() ?? "68B8FF"
+        let endHex = model.gradientEndColor.toHex() ?? "00E69A"
+        settings.saveGradientPreset(startHex: startHex, endHex: endHex)
+        gradientPresets = settings.savedGradientPresets
     }
 
     private func deleteGradientPreset(_ id: UUID) {
-        SettingsManager.shared.deleteGradientPreset(id: id)
-        gradientPresets = SettingsManager.shared.savedGradientPresets
+        settings.deleteGradientPreset(id: id)
+        gradientPresets = settings.savedGradientPresets
     }
 
-    private func deleteSelectedGradientPreset() {
+    func deleteSelectedGradientPreset() {
         guard let selectedID = selectedGradientPresetID, gradientPresets.count > 1 else { return }
         deleteGradientPreset(selectedID)
     }
 
-    private func activeBadge() -> some View {
-        Text("Active")
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .foregroundColor(.accentColor)
-            .background(
-                Capsule()
-                    .fill(Color.accentColor.opacity(0.16))
+    func queueThemeDeletion(_ theme: Theme) {
+        guard theme.name != Theme.defaultTheme.name else { return }
+        deletionConfirmation = PendingDeletionConfirmation(
+            deletion: .theme(item: theme, wasActive: currentThemeID == theme.id)
+        )
+    }
+
+    func queueLayoutDeletion(_ profile: KeyMappingProfile) {
+        deletionConfirmation = PendingDeletionConfirmation(
+            deletion: .layout(item: profile, wasActive: currentLayoutProfileID == profile.id)
+        )
+    }
+
+    func queueConfigurationSnapshotDeletion(
+        _ document: ConfigurationSnapshotDocument
+    ) {
+        guard let index = configurationSnapshots.firstIndex(where: {
+            $0.id == document.id
+        }) else { return }
+        deletionConfirmation = PendingDeletionConfirmation(
+            deletion: .configurationSnapshot(
+                item: document,
+                index: index
             )
+        )
     }
 
-    private func queueThemeDeletion(_ theme: SettingsManager.Theme) {
-        guard theme.name != SettingsManager.Theme.defaultTheme.name else { return }
-        if editingThemeID == theme.id {
-            cancelThemeRename()
+    private func confirmDeletion(_ deletion: PendingDeletionKind) {
+        let id: PendingDeletionID
+        switch deletion {
+        case .theme(let item, _):
+            id = .theme(item.id)
+            if editingThemeID == item.id {
+                cancelThemeRename()
+            }
+            settings.deleteTheme(named: item.name)
+        case .layout(let item, _):
+            id = .layout(item.id)
+            if editingLayoutProfileID == item.id {
+                cancelLayoutProfileRename()
+            }
+            settings.deleteKeyMappingProfile(named: item.name)
+        case .configurationSnapshot(let item, _):
+            id = .configurationSnapshot(item.id)
+            if editingConfigurationSnapshotID == item.id {
+                cancelConfigurationSnapshotRename()
+            }
+            do {
+                _ = try settings.deleteConfigurationSnapshot(id: item.id)
+            } catch {
+                model.feedback = UserFeedback(
+                    severity: .error,
+                    title: String(localized: "Snapshot Couldn’t Be Deleted"),
+                    detail: error.localizedDescription
+                )
+                return
+            }
         }
-        queuePendingDeletion(id: .theme(theme.id), deletion: .theme(item: theme))
-    }
 
-    private func queueLayoutDeletion(_ profile: SettingsManager.KeyMappingProfile) {
-        if editingLayoutProfileID == profile.id {
-            cancelLayoutProfileRename()
-        }
-        queuePendingDeletion(id: .layout(profile.id), deletion: .layout(item: profile))
-    }
-
-    private func queuePendingDeletion(id: PendingDeletionID, deletion: PendingDeletionKind) {
         pendingDeletionTasks[id]?.cancel()
         pendingDeletions[id] = PendingDeletionState(deletion: deletion, secondsRemaining: inlineUndoSeconds)
+        reloadPersistedState()
+        model.feedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Saved Item Deleted"),
+            detail: String(localized: "Choose Undo within ten seconds to restore it."),
+            recoveryAction: .undo
+        )
         pendingDeletionTasks[id] = Task {
             var remaining = inlineUndoSeconds
             while remaining > 0 {
@@ -824,7 +684,8 @@ struct SettingsView: View {
                 await MainActor.run {
                     guard var pending = pendingDeletions[id] else { return }
                     if remaining == 0 {
-                        applyPendingDeletion(id: id, pending: pending)
+                        pendingDeletions[id] = nil
+                        pendingDeletionTasks[id] = nil
                     } else {
                         pending.secondsRemaining = remaining
                         pendingDeletions[id] = pending
@@ -834,39 +695,55 @@ struct SettingsView: View {
         }
     }
 
-    private func applyPendingDeletion(id: PendingDeletionID, pending: PendingDeletionState) {
-        pendingDeletions[id] = nil
+    func cancelPendingDeletion(for id: PendingDeletionID) {
+        guard let pending = pendingDeletions[id] else { return }
         pendingDeletionTasks[id]?.cancel()
         pendingDeletionTasks[id] = nil
+        pendingDeletions[id] = nil
 
         switch pending.deletion {
-        case .theme(let item):
-            SettingsManager.shared.deleteTheme(named: item.name)
-            if editingThemeID == item.id {
-                cancelThemeRename()
+        case .theme(let item, let wasActive):
+            settings.saveTheme(item)
+            if wasActive {
+                settings.activeThemeID = item.id
             }
-        case .layout(let item):
-            SettingsManager.shared.deleteKeyMappingProfile(named: item.name)
-            if editingLayoutProfileID == item.id {
-                cancelLayoutProfileRename()
+        case .layout(let item, let wasActive):
+            _ = settings.saveKeyMappingProfile(item)
+            if wasActive {
+                settings.activeLayoutID = item.id
+            }
+        case .configurationSnapshot(let item, let index):
+            do {
+                try settings.restoreDeletedConfigurationSnapshot(
+                    item,
+                    at: index
+                )
+            } catch {
+                model.feedback = UserFeedback(
+                    severity: .error,
+                    title: String(localized: "Snapshot Couldn’t Be Restored"),
+                    detail: error.localizedDescription
+                )
+                return
             }
         }
-
         reloadPersistedState()
+        model.feedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Deletion Undone"),
+            detail: String(localized: "The saved item was restored.")
+        )
     }
 
-    private func cancelPendingDeletion(for id: PendingDeletionID) {
-        pendingDeletionTasks[id]?.cancel()
-        pendingDeletionTasks[id] = nil
-        pendingDeletions[id] = nil
-    }
-
-    private func clearPendingDeletionState() {
-        for task in pendingDeletionTasks.values {
-            task.cancel()
+    private func deletedItemDescription(_ deletion: PendingDeletionKind) -> String {
+        switch deletion {
+        case .theme(let item, _):
+            return String(localized: "Deleted theme \"\(item.name)\".")
+        case .layout(let item, _):
+            return String(localized: "Deleted layout \"\(item.name)\".")
+        case .configurationSnapshot(let item, _):
+            return String(localized: "Deleted snapshot \"\(item.name)\".")
         }
-        pendingDeletionTasks.removeAll()
-        pendingDeletions.removeAll()
     }
 
     private func copyThemeStringToClipboard() {
@@ -874,47 +751,120 @@ struct SettingsView: View {
             refreshThemeTransferStringFromActiveTheme()
         }
         guard !themeTransferString.isEmpty else {
-            themeTransferStatus = "Export failed: could not encode theme."
+            themeTransferFeedback = UserFeedback(
+                severity: .error,
+                title: String(localized: "Theme Couldn’t Be Shared"),
+                detail: String(localized: "KeyLight could not encode the current theme.")
+            )
             return
         }
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.setString(themeTransferString, forType: .string) {
-            themeTransferStatus = "Theme string copied."
+            themeTransferFeedback = UserFeedback(
+                severity: .success,
+                title: String(localized: "Theme String Copied")
+            )
         } else {
-            themeTransferStatus = "Export failed: could not copy to clipboard."
+            themeTransferFeedback = UserFeedback(
+                severity: .error,
+                title: String(localized: "Theme Couldn’t Be Copied"),
+                detail: String(localized: "The system pasteboard did not accept the theme string.")
+            )
         }
     }
 
-    private func importThemeString(_ value: String) {
+    @discardableResult
+    private func importThemeString(_ value: String) -> Bool {
         do {
-            let theme = try SettingsManager.shared.importThemeString(value)
-            SettingsManager.shared.saveTheme(theme)
+            let theme = try settings.importThemeString(value)
+            settings.saveTheme(theme)
+            let persistedTheme = settings.savedThemes.first(where: { $0.name == theme.name }) ?? theme
             preserveScrollOffset {
-                appState.applyTheme(theme)
+                model.applyTheme(persistedTheme)
+                settings.activeThemeID = persistedTheme.id
                 reloadPersistedState()
             }
-            themeTransferStatus = "Imported and applied theme \"\(theme.name)\"."
+            requestSettingsPreview()
+            themeTransferFeedback = UserFeedback(
+                severity: .success,
+                title: String(localized: "Theme Imported"),
+                detail: String(localized: "Applied \"\(persistedTheme.name)\".")
+            )
+            return true
         } catch {
-            themeTransferStatus = "Import failed: \(error.localizedDescription)"
+            themeTransferFeedback = UserFeedback(
+                severity: .error,
+                title: String(localized: "Theme Import Failed"),
+                detail: error.localizedDescription
+            )
+            return false
         }
     }
 
-    private func selectTheme(_ theme: SettingsManager.Theme, isActive: Bool) {
+    func selectTheme(_ theme: Theme, isActive: Bool) {
         guard !isActive else { return }
         preserveScrollOffset {
-            appState.applyTheme(theme)
+            model.applyTheme(theme)
+            settings.activeThemeID = theme.id
+            reloadPersistedState()
+        }
+        requestSettingsPreview()
+    }
+
+    func selectLayoutProfile(_ profile: KeyMappingProfile, isActive: Bool) {
+        guard !isActive else { return }
+        preserveScrollOffset {
+            applyLayoutProfile(profile)
             reloadPersistedState()
         }
     }
 
-    private func selectLayoutProfile(_ profile: SettingsManager.KeyMappingProfile, isActive: Bool) {
-        guard !isActive else { return }
-        preserveScrollOffset {
-            KeyPositionManager.shared.loadProfile(profile)
+    func applyBundledLayoutPreset(_ preset: SettingsManager.BundledLayoutPreset) {
+        do {
+            let profile: KeyMappingProfile
+            if let existing = savedLayoutProfiles.first(where: {
+                $0.name.caseInsensitiveCompare(preset.displayName) == .orderedSame
+            }) {
+                profile = existing
+            } else {
+                let imported = try settings.importBundledLayoutPreset(preset)
+                guard let persisted = settings.saveKeyMappingProfile(imported) else {
+                    layoutTransferFeedback = UserFeedback(
+                        severity: .error,
+                        title: String(localized: "Layout Preset Couldn’t Be Applied"),
+                        detail: String(localized: "The preset could not be saved as a keyboard layout.")
+                    )
+                    return
+                }
+                profile = persisted
+            }
+            applyLayoutProfile(profile)
             reloadPersistedState()
+            layoutTransferFeedback = UserFeedback(
+                severity: .success,
+                title: String(localized: "Layout Preset Applied"),
+                detail: String(localized: "Applied \"\(profile.name)\". Use Calibrate Keyboard for device-specific fine tuning.")
+            )
+        } catch {
+            layoutTransferFeedback = UserFeedback(
+                severity: .error,
+                title: String(localized: "Layout Preset Couldn’t Be Applied"),
+                detail: error.localizedDescription
+            )
         }
+    }
+
+    private func applyLayoutProfile(_ profile: KeyMappingProfile) {
+        keyLayoutStore.apply(
+            KeyLayout(
+                offsets: profile.keyOffsets,
+                widthMultipliers: profile.keyWidthOverrides
+            ),
+            asBaseline: true
+        )
+        settings.activeLayoutID = profile.id
     }
 
     private func preserveScrollOffset(_ action: () -> Void) {
@@ -939,33 +889,48 @@ struct SettingsView: View {
         scrollView.reflectScrolledClipView(clipView)
     }
 
-    private func exportActiveLayoutProfile() {
-        guard let activeProfile = activeLayoutProfile else {
-            layoutTransferStatus = "Export failed: no active layout profile."
-            return
-        }
-        guard let data = SettingsManager.shared.exportLayoutProfileData(activeProfile) else {
-            layoutTransferStatus = "Export failed: could not encode layout profile."
+    func exportActiveLayoutProfile() {
+        var liveProfile = activeLayoutProfile ?? KeyMappingProfile(
+            name: "Current Layout",
+            keyOffsets: [:],
+            keyWidthOverrides: [:]
+        )
+        liveProfile.keyOffsets = keyLayoutStore.layout.offsets
+        liveProfile.keyWidthOverrides = keyLayoutStore.layout.widthMultipliers
+        guard let data = settings.exportLayoutProfileData(liveProfile) else {
+            layoutTransferFeedback = UserFeedback(
+                severity: .error,
+                title: String(localized: "Layout Couldn’t Be Exported"),
+                detail: String(localized: "KeyLight could not encode the current layout.")
+            )
             return
         }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "KeyLight-Layout-\(safeFilename(activeProfile.name)).json"
+        panel.nameFieldStringValue = "KeyLight-Layout-\(safeFilename(liveProfile.name)).json"
 
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                try data.write(to: url)
-                layoutTransferStatus = "Exported \"\(activeProfile.name)\"."
+                try data.write(to: url, options: .atomic)
+                layoutTransferFeedback = UserFeedback(
+                    severity: .success,
+                    title: String(localized: "Layout Exported"),
+                    detail: String(localized: "Saved the current layout as \"\(liveProfile.name)\".")
+                )
             } catch {
-                layoutTransferStatus = "Export failed: \(error.localizedDescription)"
+                layoutTransferFeedback = UserFeedback(
+                    severity: .error,
+                    title: String(localized: "Layout Export Failed"),
+                    detail: error.localizedDescription
+                )
             }
         } else {
-            layoutTransferStatus = ""
+            layoutTransferFeedback = nil
         }
     }
 
-    private func importLayoutProfile() {
+    func importLayoutProfile() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
@@ -983,15 +948,37 @@ struct SettingsView: View {
                     try loadValidatedSettingsImportData(from: url, maxFileSize: maxFileSize)
                 }.value
 
-                let importedProfile = try SettingsManager.shared.importLayoutProfileData(data)
-                SettingsManager.shared.saveKeyMappingProfile(importedProfile)
-                KeyPositionManager.shared.loadProfile(importedProfile)
+                let importedProfile = try settings.importLayoutProfileData(data)
+                guard let persistedProfile = settings.saveKeyMappingProfile(importedProfile) else {
+                    throw NSError(
+                        domain: "KeyLight",
+                        code: 26,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: String(
+                                localized: "A layout with that name already exists."
+                            )
+                        ]
+                    )
+                }
+                applyLayoutProfile(persistedProfile)
                 reloadPersistedState()
-                layoutTransferStatus = "Imported and applied layout profile \"\(importedProfile.name)\"."
+                layoutTransferFeedback = UserFeedback(
+                    severity: .success,
+                    title: String(localized: "Layout Imported"),
+                    detail: String(localized: "Applied \"\(persistedProfile.name)\".")
+                )
             } catch SettingsImportValidationError.fileTooLarge {
-                layoutTransferStatus = "Import failed: file too large (max 5MB)"
+                layoutTransferFeedback = UserFeedback(
+                    severity: .error,
+                    title: String(localized: "Layout Import Failed"),
+                    detail: String(localized: "The file is too large (maximum 1 MB).")
+                )
             } catch {
-                layoutTransferStatus = "Import failed: \(error.localizedDescription)"
+                layoutTransferFeedback = UserFeedback(
+                    severity: .error,
+                    title: String(localized: "Layout Import Failed"),
+                    detail: error.localizedDescription
+                )
             }
         }
     }
@@ -1009,90 +996,212 @@ struct SettingsView: View {
         return sanitized.isEmpty ? "Layout-Profile" : sanitized
     }
 
-    private func startThemeRename(_ theme: SettingsManager.Theme) {
+    func startThemeRename(_ theme: Theme) {
         editingThemeID = theme.id
         themeRenameDraft = theme.name
         themeRenameError = nil
     }
 
-    private func cancelThemeRename() {
+    func cancelThemeRename() {
         editingThemeID = nil
         themeRenameDraft = ""
         themeRenameError = nil
     }
 
-    private func themeRenameValidation(for theme: SettingsManager.Theme) -> String? {
-        let trimmed = trimmed(themeRenameDraft)
-        if trimmed.isEmpty {
-            return "Name cannot be empty."
+    func themeRenameValidation(for theme: Theme) -> String? {
+        guard let normalizedName = PersistenceValidation.normalizedName(themeRenameDraft) else {
+            return String(localized: "Name cannot be empty.")
         }
-        if trimmed.caseInsensitiveCompare(theme.name) == .orderedSame {
+        if normalizedName.caseInsensitiveCompare(theme.name) == .orderedSame {
             return nil
         }
         let exists = savedThemes.contains { existing in
-            existing.id != theme.id && existing.name.caseInsensitiveCompare(trimmed) == .orderedSame
+            existing.id != theme.id &&
+                existing.name.caseInsensitiveCompare(normalizedName) == .orderedSame
         }
-        return exists ? "Theme name already exists." : nil
+        return exists ? String(localized: "Theme name already exists.") : nil
     }
 
-    private func saveThemeRename(_ theme: SettingsManager.Theme) {
+    func saveThemeRename(_ theme: Theme) {
         if let error = themeRenameValidation(for: theme) {
             themeRenameError = error
             return
         }
-        SettingsManager.shared.renameTheme(from: theme.name, to: themeRenameDraft)
+        guard let newName = PersistenceValidation.normalizedName(themeRenameDraft),
+              settings.renameTheme(from: theme.name, to: newName) else {
+            themeRenameError = String(localized: "Choose a unique name up to 100 characters.")
+            return
+        }
         reloadPersistedState()
         cancelThemeRename()
+        themeTransferFeedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Theme Renamed"),
+            detail: String(localized: "Renamed \"\(theme.name)\" to \"\(newName)\".")
+        )
     }
 
-    private func startLayoutProfileRename(_ profile: SettingsManager.KeyMappingProfile) {
+    func startLayoutProfileRename(_ profile: KeyMappingProfile) {
         editingLayoutProfileID = profile.id
         layoutRenameDraft = profile.name
         layoutRenameError = nil
     }
 
-    private func cancelLayoutProfileRename() {
+    func cancelLayoutProfileRename() {
         editingLayoutProfileID = nil
         layoutRenameDraft = ""
         layoutRenameError = nil
     }
 
-    private func layoutRenameValidation(for profile: SettingsManager.KeyMappingProfile) -> String? {
-        let trimmed = trimmed(layoutRenameDraft)
-        if trimmed.isEmpty {
-            return "Name cannot be empty."
+    func layoutRenameValidation(for profile: KeyMappingProfile) -> String? {
+        guard let normalizedName = PersistenceValidation.normalizedName(layoutRenameDraft) else {
+            return String(localized: "Name cannot be empty.")
         }
-        if trimmed.caseInsensitiveCompare(profile.name) == .orderedSame {
+        if normalizedName.caseInsensitiveCompare(profile.name) == .orderedSame {
             return nil
         }
         let exists = savedLayoutProfiles.contains { existing in
-            existing.id != profile.id && existing.name.caseInsensitiveCompare(trimmed) == .orderedSame
+            existing.id != profile.id &&
+                existing.name.caseInsensitiveCompare(normalizedName) == .orderedSame
         }
-        return exists ? "Layout profile name already exists." : nil
+        return exists ? String(localized: "Layout profile name already exists.") : nil
     }
 
-    private func saveLayoutProfileRename(_ profile: SettingsManager.KeyMappingProfile) {
+    func saveLayoutProfileRename(_ profile: KeyMappingProfile) {
         if let error = layoutRenameValidation(for: profile) {
             layoutRenameError = error
             return
         }
-        SettingsManager.shared.renameKeyMappingProfile(from: profile.name, to: layoutRenameDraft)
+        guard let newName = PersistenceValidation.normalizedName(layoutRenameDraft),
+              settings.renameKeyMappingProfile(from: profile.name, to: newName) else {
+            layoutRenameError = String(localized: "Choose a unique name up to 100 characters.")
+            return
+        }
         reloadPersistedState()
         cancelLayoutProfileRename()
+        layoutTransferFeedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Layout Renamed"),
+            detail: String(localized: "Renamed \"\(profile.name)\" to \"\(newName)\".")
+        )
     }
 
-    private func isStatusError(_ status: String) -> Bool {
-        let lowered = status.lowercased()
-        return lowered.contains("failed") || lowered.contains("invalid") || lowered.contains("unsupported")
+    func normalizedHex(_ value: String?, fallback: String = "") -> String {
+        (value ?? fallback).uppercased()
     }
 
-    private func reloadPersistedState() {
-        gradientPresets = SettingsManager.shared.savedGradientPresets
-        savedThemes = SettingsManager.shared.savedThemes
-        savedLayoutProfiles = SettingsManager.shared.savedKeyMappingProfiles
-        currentThemeName = SettingsManager.shared.currentThemeName
-        currentLayoutProfileName = SettingsManager.shared.currentKeyMappingProfileName
-        refreshThemeTransferStringFromActiveTheme()
+    private func liveThemeSnapshot(id: UUID, name: String) -> Theme {
+        Theme(
+            id: id,
+            name: name,
+            colorHex: normalizedHex(model.glowColor.toHex(), fallback: "68B8FF"),
+            opacity: model.glowOpacity,
+            size: model.glowSize,
+            width: model.glowWidth,
+            glowRoundness: model.glowRoundness,
+            glowFullness: model.glowFullness,
+            fadeDuration: model.fadeDuration,
+            colorMode: model.colorMode,
+            effectStyle: model.effectStyle,
+            shapeProfile: model.surfaceShapeProfile,
+            gradientStartHex: normalizedHex(model.gradientStartColor.toHex(), fallback: "68B8FF"),
+            gradientEndHex: normalizedHex(model.gradientEndColor.toHex(), fallback: "00E69A")
+        )
+    }
+
+    @discardableResult
+    func saveCurrentThemeAs(_ requestedName: String) -> Bool {
+        guard let name = PersistenceValidation.normalizedName(requestedName) else { return false }
+        guard !savedThemes.contains(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            themeTransferFeedback = UserFeedback(
+                severity: .error,
+                title: String(localized: "Theme Couldn’t Be Saved"),
+                detail: String(localized: "A theme named \"\(name)\" already exists.")
+            )
+            return false
+        }
+        let theme = liveThemeSnapshot(id: UUID(), name: name)
+        settings.saveTheme(theme)
+        if let saved = settings.savedThemes.first(where: { $0.name == name }) {
+            settings.activeThemeID = saved.id
+        }
+        reloadPersistedState()
+        themeTransferFeedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Theme Saved"),
+            detail: String(localized: "Saved \"\(name)\".")
+        )
+        return true
+    }
+
+    func updateActiveTheme() {
+        guard let activeTheme else { return }
+        settings.saveTheme(
+            liveThemeSnapshot(id: activeTheme.id, name: activeTheme.name)
+        )
+        settings.activeThemeID = activeTheme.id
+        reloadPersistedState()
+        themeTransferFeedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Theme Updated"),
+            detail: String(localized: "Saved the current appearance to \"\(activeTheme.name)\".")
+        )
+    }
+
+    func revertActiveTheme() {
+        guard let activeTheme else { return }
+        model.applyTheme(activeTheme)
+        settings.activeThemeID = activeTheme.id
+        reloadPersistedState()
+        requestSettingsPreview()
+    }
+
+    func updateActiveLayoutProfile() {
+        guard var profile = activeLayoutProfile else { return }
+        profile.keyOffsets = keyLayoutStore.layout.offsets
+        profile.keyWidthOverrides = keyLayoutStore.layout.widthMultipliers
+        settings.saveKeyMappingProfile(profile)
+        keyLayoutStore.markCurrentAsBaseline()
+        reloadPersistedState()
+        layoutTransferFeedback = UserFeedback(
+            severity: .success,
+            title: String(localized: "Layout Updated"),
+            detail: String(localized: "Saved the current calibration to \"\(profile.name)\".")
+        )
+    }
+
+    func revertActiveLayoutProfile() {
+        guard let activeLayoutProfile else { return }
+        applyLayoutProfile(activeLayoutProfile)
+        reloadPersistedState()
+    }
+
+    func themeDisplayName(_ theme: Theme, isActive: Bool) -> String {
+        isActive && activeThemeIsEdited
+            ? String(localized: "\(theme.name) · Edited")
+            : theme.name
+    }
+
+    func layoutDisplayName(_ profile: KeyMappingProfile, isActive: Bool) -> String {
+        isActive && activeLayoutIsEdited
+            ? String(localized: "\(profile.name) · Edited")
+            : profile.name
+    }
+
+    func themeSelectionAccessibilityValue(isActive: Bool, isEdited: Bool) -> String {
+        guard isActive else { return String(localized: "Not selected") }
+        return isEdited
+            ? String(localized: "Selected, edited")
+            : String(localized: "Selected")
+    }
+
+    func reloadPersistedState() {
+        gradientPresets = settings.savedGradientPresets
+        configurationSnapshots = settings.configurationSnapshots
+        model.reloadSavedThemes()
+        keyLayoutStore.reloadSavedProfiles(from: settings)
 
         if let editingThemeID, !savedThemes.contains(where: { $0.id == editingThemeID }) {
             cancelThemeRename()
@@ -1100,89 +1209,62 @@ struct SettingsView: View {
         if let editingLayoutProfileID, !savedLayoutProfiles.contains(where: { $0.id == editingLayoutProfileID }) {
             cancelLayoutProfileRename()
         }
+        if let editingConfigurationSnapshotID,
+           !configurationSnapshots.contains(where: {
+               $0.id == editingConfigurationSnapshotID
+           }) {
+            cancelConfigurationSnapshotRename()
+        }
     }
 
-    private func refreshThemeTransferStringFromActiveTheme() {
-        let activeTheme = savedThemes.first(where: { $0.name == currentThemeName }) ?? appState.currentTheme()
-        themeTransferString = SettingsManager.shared.exportThemeString(activeTheme) ?? ""
+    func refreshThemeTransferStringFromActiveTheme() {
+        let liveTheme = liveThemeSnapshot(
+            id: activeTheme?.id ?? UUID(),
+            name: activeTheme?.name ?? settings.currentThemeName
+        )
+        themeTransferString = settings.exportThemeString(liveTheme) ?? ""
     }
 
-    private func trimmed(_ value: String) -> String {
+    func trimmed(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-}
 
-private struct SettingsScrollViewBridge: NSViewRepresentable {
-    let onResolve: (NSScrollView) -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        NSView()
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            var current: NSView? = nsView
-            while let view = current {
-                if let scrollView = view as? NSScrollView {
-                    onResolve(scrollView)
-                    return
-                }
-                current = view.superview
+    func startChordPreviewTest() {
+        chordPreviewTask?.cancel()
+        let keyCodes: [UInt16] = [0, 1, 2, 3] // A, S, D, F: adjacent and visually diagnostic.
+        let targets = zip(PreviewSource.chordTestSources, keyCodes).map { source, keyCode in
+            let keyInfo = KeyMapping.keyInfo(for: keyCode)
+            return GlowTarget.preview(
+                source,
+                colorReferenceKeyCode: keyCode,
+                horizontalPosition: Double(keyLayoutStore.adjustedPosition(
+                    for: keyCode,
+                    originalPosition: keyInfo.position
+                )),
+                keyWidth: Double(keyLayoutStore.effectiveWidth(
+                    for: keyCode,
+                    defaultWidth: keyInfo.width
+                ))
+            )
+        }
+        model.setChordPreview(targets)
+        chordPreviewActive = true
+        chordPreviewTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+            } catch {
+                return
             }
+            guard !Task.isCancelled else { return }
+            stopChordPreviewTest()
         }
     }
-}
 
-struct ColorPresetButton: View {
-    let color: Color
-    @ObservedObject var appState: AppState
-    @Binding var hexColor: String
-
-    var body: some View {
-        Button(action: {
-            appState.glowColor = color
-            hexColor = color.toHex() ?? ""
-        }) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(color)
-                .frame(width: 20, height: 20)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.primary.opacity(0.2), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct GradientPresetButton: View {
-    let startHex: String
-    let endHex: String
-    @ObservedObject var appState: AppState
-
-    private var isSelected: Bool {
-        let currentStart = appState.gradientStartColor.toHex()?.uppercased()
-        let currentEnd = appState.gradientEndColor.toHex()?.uppercased()
-        return currentStart == startHex.uppercased() && currentEnd == endHex.uppercased()
-    }
-
-    var body: some View {
-        Button(action: {
-            appState.gradientStartColor = Color(hex: startHex) ?? .blue
-            appState.gradientEndColor = Color(hex: endHex) ?? .green
-        }) {
-            LinearGradient(
-                colors: [Color(hex: startHex) ?? .blue, Color(hex: endHex) ?? .green],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: 30, height: 20)
-            .cornerRadius(4)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(isSelected ? Color.accentColor : Color.primary.opacity(0.2), lineWidth: isSelected ? 2 : 1)
-            )
-        }
-        .buttonStyle(.plain)
+    func stopChordPreviewTest() {
+        chordPreviewTask?.cancel()
+        chordPreviewTask = nil
+        guard chordPreviewActive else { return }
+        chordPreviewActive = false
+        model.clearChordPreview()
     }
 }

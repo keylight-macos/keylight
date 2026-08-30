@@ -41,3 +41,6 @@ dist/.DS_Store
 
 # Logs
 *.log
+
+# LLVM profiling output
+*.profraw

@@ -1,0 +1,31 @@
+name: Signed Update Feed Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 7 * * 3'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: >-
+      ${{ vars.KEYLIGHT_APPCAST_URL != '' &&
+          vars.KEYLIGHT_SPARKLE_PUBLIC_ED_KEY != '' &&
+          vars.KEYLIGHT_EXPECTED_TEAM_ID != '' }}
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      KEYLIGHT_APPCAST_URL: ${{ vars.KEYLIGHT_APPCAST_URL }}
+      KEYLIGHT_SPARKLE_PUBLIC_ED_KEY: ${{ vars.KEYLIGHT_SPARKLE_PUBLIC_ED_KEY }}
+      KEYLIGHT_EXPECTED_TEAM_ID: ${{ vars.KEYLIGHT_EXPECTED_TEAM_ID }}
+
+    steps:
+      - name: Check out feed-audit code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify signed feed, release notes, archive, and Developer ID
+        shell: bash
+        run: ./scripts/audit-update-feed.sh

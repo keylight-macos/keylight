@@ -1,40 +1,82 @@
 import Foundation
-import SwiftUI
-import ServiceManagement
-import AppKit
+
+enum ConfigurationSnapshotError: LocalizedError, Equatable {
+    case invalidName
+    case nameConflict(String)
+    case snapshotNotFound
+    case invalidDocument
+    case unsupportedVersion(Int)
+    case importTooLarge
+    case persistentDataTooLarge
+    case invalidConfiguration(String)
+    case noPreviousSetup
+    case transactionFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidName:
+            return String(localized: "Choose a name up to 100 characters.")
+        case .nameConflict(let name):
+            return String(localized: "A snapshot named \"\(name)\" already exists.")
+        case .snapshotNotFound:
+            return String(localized: "The configuration snapshot could not be found.")
+        case .invalidDocument:
+            return String(localized: "The file is not a valid KeyLight configuration snapshot.")
+        case .unsupportedVersion(let version):
+            return String(localized: "Snapshot version \(version) is not supported by this build.")
+        case .importTooLarge:
+            return String(localized: "The snapshot file is too large (maximum 1 MB).")
+        case .persistentDataTooLarge:
+            return String(localized: "The saved snapshot data is too large (maximum 500 KB).")
+        case .invalidConfiguration(let reason):
+            return reason
+        case .noPreviousSetup:
+            return String(localized: "There is no previous setup to restore.")
+        case .transactionFailed:
+            return String(localized: "The configuration could not be applied. Your previous setup was restored.")
+        }
+    }
+}
+
+enum ConfigurationSnapshotImportPolicy {
+    case rejectConflict
+    case replace
+    case saveCopy
+}
 
 /// Manages persistent storage of all app settings
 @MainActor
 final class SettingsManager {
-    static let shared = SettingsManager()
+    typealias SnapshotCommitVerifier = (ConfigurationSnapshotPayload) -> Bool
 
-    private let defaults = UserDefaults.standard
-    private static let invalidThemeStringMessage = "Invalid theme string."
-    private static let themeStringPrefix = "keylight-theme-v1"
-    private static let defaultThemeString = "keylight-theme-v1;name=current;mode=positionGradient;color=68B8FF;opacity=0.8013;size=80.5536;width=1.0000;round=0.7069;hard=0.6046;fade=1.0004;gstart=68B8FF;gend=00E69A"
-    private static let maxThemeStringLength = 2_048
-    private static let themeStringFieldOrder = [
-        "name", "mode", "color", "opacity", "size", "width", "round", "hard", "fade", "gstart", "gend"
-    ]
-    private static let themeStringRequiredFields = Set(themeStringFieldOrder)
+    private let defaults: PreferencesStore
+    private let launchAtLoginService: any LaunchAtLoginServicing
+    private let snapshotCommitVerifier: SnapshotCommitVerifier
     private static let defaultExperienceSeedVersion = 1
     private static let defaultLayoutMigrationVersion = 1
     private static let bundledLayoutProfilesSeedVersion = 1
+    private static let stableSelectionMigrationVersion = 1
+    static let currentOnboardingVersion = 1
     private static let defaultSeededLayoutPresetID = "macbook-air-13-m4-default"
     private static let bundledMacBookProPresetID = "macbook-pro-14-m4"
     private static let defaultSeededLayoutName = "MacBook Air 13 M4 Default"
-    private static let layoutProfileSchemaVersion = 1
-    private static let maxLayoutProfileImportSize = 1_000_000
-    private static let invalidLayoutProfileMessage = "The file is not a valid KeyLight layout profile."
+    private static let invalidLayoutProfileMessage = String(
+        localized: "The file is not a valid KeyLight layout profile."
+    )
     private static let defaultSolidHex = "68B8FF"
     private static let defaultGradientEndHex = "00E69A"
     private static let maxGradientPresetCount = 24
+    static let maximumConfigurationSnapshotImportSize =
+        PersistenceValidation.maximumLayoutImportSize
+    static let maximumConfigurationSnapshotPersistentSize = 500_000
 
     // Keys for UserDefaults
     private enum Keys {
         static let isEnabled = "isEnabled"
+        static let hasSeenPermissionExplanation = "hasSeenPermissionExplanation"
         static let glowColorHex = "glowColorHex"
         static let glowOpacity = "glowOpacity"
+        static let physicalRefractionStrength = "physicalRefractionStrength"
         static let glowSize = "glowSize"
         static let glowWidth = "glowWidth"
         static let glowRoundness = "glowRoundness"
@@ -43,23 +85,43 @@ final class SettingsManager {
         static let fadeDurationDefaultMigratedV2 = "fadeDurationDefaultMigratedV2"
         static let launchAtLogin = "launchAtLogin"
         static let colorMode = "colorMode"
+        static let effectStyle = "effectStyle"
+        static let chordSurfaceStyle = "chordSurfaceStyle"
+        static let chordIntensityMultiplier = "chordIntensityMultiplier"
+        static let powerSavingMode = "powerSavingMode"
+        static let effectConfigurationsByStyle =
+            "effectConfigurationsByStyleV1"
+        static let surfaceShapeProfile = "surfaceShapeProfile"
         static let savedThemes = "savedThemes"
         static let currentThemeName = "currentThemeName"
+        static let activeThemeID = "activeThemeID"
         static let keyMappingProfiles = "keyMappingProfiles"
         static let currentKeyMappingProfileName = "currentKeyMappingProfileName"
+        static let activeLayoutID = "activeLayoutID"
+        static let overlayDisplaySelection = "overlayDisplaySelection"
+        static let mirroredDisplayIDs = "mirroredDisplayIDs"
+        static let displayLayoutProfileBindings = "displayLayoutProfileBindings"
+        static let globalShortcut = "globalShortcut"
         static let gradientStartHex = "gradientStartHex"
         static let gradientEndHex = "gradientEndHex"
         static let gradientPresets = "gradientPresets"
         static let defaultExperienceSeedVersion = "defaultExperienceSeedVersion"
         static let defaultLayoutMigrationVersion = "defaultLayoutMigrationVersion"
         static let bundledLayoutProfilesSeedVersion = "bundledLayoutProfilesSeedVersion"
+        static let stableSelectionMigrationVersion = "stableSelectionMigrationVersion"
+        static let onboardingCompletedVersion = "onboardingCompletedVersion"
+        static let onboardingDeferredVersion = "onboardingDeferredVersion"
+        static let configurationSnapshots = "configurationSnapshotsV1"
+        static let configurationSnapshotRecovery =
+            "configurationSnapshotRecoveryV1"
     }
 
-    #if DEBUG
-    static let _testUserDefaultsKeyContract: [String] = [
+    private static let managedLocalPreferenceKeys: [String] = [
         Keys.isEnabled,
+        Keys.hasSeenPermissionExplanation,
         Keys.glowColorHex,
         Keys.glowOpacity,
+        Keys.physicalRefractionStrength,
         Keys.glowSize,
         Keys.glowWidth,
         Keys.glowRoundness,
@@ -68,26 +130,101 @@ final class SettingsManager {
         Keys.fadeDurationDefaultMigratedV2,
         Keys.launchAtLogin,
         Keys.colorMode,
+        Keys.effectStyle,
+        Keys.chordSurfaceStyle,
+        Keys.chordIntensityMultiplier,
+        Keys.powerSavingMode,
+        Keys.effectConfigurationsByStyle,
+        Keys.surfaceShapeProfile,
         Keys.savedThemes,
         Keys.currentThemeName,
+        Keys.activeThemeID,
         Keys.keyMappingProfiles,
         Keys.currentKeyMappingProfileName,
+        Keys.activeLayoutID,
+        Keys.overlayDisplaySelection,
+        Keys.mirroredDisplayIDs,
+        Keys.displayLayoutProfileBindings,
+        Keys.globalShortcut,
         Keys.gradientStartHex,
         Keys.gradientEndHex,
         Keys.gradientPresets,
         Keys.defaultExperienceSeedVersion,
         Keys.defaultLayoutMigrationVersion,
         Keys.bundledLayoutProfilesSeedVersion,
-        KeyPositionManager.offsetsKey,
+        Keys.stableSelectionMigrationVersion,
+        Keys.onboardingCompletedVersion,
+        Keys.onboardingDeferredVersion,
+        Keys.configurationSnapshots,
+        Keys.configurationSnapshotRecovery,
+        KeyLayoutStore.offsetsKey,
         "KeyWidthOverrides"
     ]
+
+    /// The only persisted keys a snapshot application transaction may touch.
+    /// Keeping this registry separate from all managed preferences makes the
+    /// exclusions auditable and prevents imported JSON from becoming keys.
+    private static let configurationSnapshotStorageKeyRegistry: [String] = [
+        Keys.glowColorHex,
+        Keys.glowOpacity,
+        Keys.physicalRefractionStrength,
+        Keys.glowSize,
+        Keys.glowWidth,
+        Keys.glowRoundness,
+        Keys.glowFullness,
+        Keys.fadeDuration,
+        Keys.colorMode,
+        Keys.effectStyle,
+        Keys.chordSurfaceStyle,
+        Keys.chordIntensityMultiplier,
+        Keys.powerSavingMode,
+        Keys.effectConfigurationsByStyle,
+        Keys.surfaceShapeProfile,
+        Keys.savedThemes,
+        Keys.currentThemeName,
+        Keys.activeThemeID,
+        Keys.keyMappingProfiles,
+        Keys.currentKeyMappingProfileName,
+        Keys.activeLayoutID,
+        Keys.overlayDisplaySelection,
+        Keys.mirroredDisplayIDs,
+        Keys.displayLayoutProfileBindings,
+        Keys.globalShortcut,
+        Keys.gradientStartHex,
+        Keys.gradientEndHex,
+        Keys.gradientPresets,
+        KeyLayoutStore.offsetsKey,
+        KeyLayoutStore.widthMultipliersKey
+    ]
+
+    #if DEBUG
+    static let _testUserDefaultsKeyContract = managedLocalPreferenceKeys
+    static let _testConfigurationSnapshotStorageKeyRegistry =
+        configurationSnapshotStorageKeyRegistry
+    static let _testConfigurationSnapshotPayloadKeyRegistry = Set(
+        ConfigurationSnapshotPayload.CodingKeys.allCases.map(\.rawValue)
+    )
     #endif
 
-    private init() {
-        migrateFadeDurationDefaultIfNeeded()
+    init(
+        preferencesStore: PreferencesStore = .standard,
+        launchAtLoginService: any LaunchAtLoginServicing = LaunchAtLoginService(),
+        snapshotCommitVerifier: @escaping SnapshotCommitVerifier = { _ in true }
+    ) {
+        defaults = preferencesStore
+        self.launchAtLoginService = launchAtLoginService
+        self.snapshotCommitVerifier = snapshotCommitVerifier
+        // Determine whether this is a fresh install before any migration writes
+        // a default value. Otherwise the migration-created fade-duration key
+        // makes the first-run seed incorrectly look like existing user data.
+        let wasFreshInstall = isFreshInstallForDefaultSeed
         seedDefaultExperienceIfNeeded()
+        migrateFadeDurationDefaultIfNeeded()
+        initializeEffectConfigurationsIfNeeded()
         applyDefaultLayoutIfMissingOnce()
         seedBundledLayoutProfilesIfNeededOnce()
+        migrateStableSelectionIDsIfNeeded()
+        initializeOnboardingState(wasFreshInstall: wasFreshInstall)
     }
 
     /// Sanitize a hex color string: keep only valid hex characters, pad to 6 chars with zeros
@@ -102,10 +239,6 @@ final class SettingsManager {
     private func validated(_ value: Double, range: ClosedRange<Double>, default defaultValue: Double) -> Double {
         guard value.isFinite else { return defaultValue }
         return min(max(value, range.lowerBound), range.upperBound)
-    }
-
-    private func notifyStorageChanged() {
-        NotificationCenter.default.post(name: .settingsStorageChanged, object: nil)
     }
 
     /// One-time migration: treat legacy default-ish fade duration as "unset" and move to new default (1.0s).
@@ -139,6 +272,33 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: Keys.isEnabled) }
     }
 
+    var hasSeenPermissionExplanation: Bool {
+        get { defaults.object(forKey: Keys.hasSeenPermissionExplanation) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Keys.hasSeenPermissionExplanation) }
+    }
+
+    var shouldPresentOnboarding: Bool {
+        defaults.integer(forKey: Keys.onboardingCompletedVersion)
+            < Self.currentOnboardingVersion
+            && defaults.integer(forKey: Keys.onboardingDeferredVersion)
+                < Self.currentOnboardingVersion
+    }
+
+    func completeOnboarding() {
+        defaults.set(
+            Self.currentOnboardingVersion,
+            forKey: Keys.onboardingCompletedVersion
+        )
+        defaults.removeObject(forKey: Keys.onboardingDeferredVersion)
+    }
+
+    func deferOnboarding() {
+        defaults.set(
+            Self.currentOnboardingVersion,
+            forKey: Keys.onboardingDeferredVersion
+        )
+    }
+
     var glowColorHex: String {
         get { defaults.string(forKey: Keys.glowColorHex) ?? Self.defaultSolidHex }
         set { defaults.set(newValue, forKey: Keys.glowColorHex) }
@@ -149,8 +309,21 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: Keys.glowOpacity) }
     }
 
+    var physicalRefractionStrength: Double {
+        get {
+            validated(
+                defaults.object(
+                    forKey: Keys.physicalRefractionStrength
+                ) as? Double ?? 1.0,
+                range: 0.5...2.5,
+                default: 1.0
+            )
+        }
+        set { defaults.set(newValue, forKey: Keys.physicalRefractionStrength) }
+    }
+
     var glowSize: Double {
-        get { validated(defaults.object(forKey: Keys.glowSize) as? Double ?? 80.5536, range: 10.0...200.0, default: 80.5536) }
+        get { validated(defaults.object(forKey: Keys.glowSize) as? Double ?? 80.5536, range: 4.0...200.0, default: 80.5536) }
         set { defaults.set(newValue, forKey: Keys.glowSize) }
     }
 
@@ -187,37 +360,44 @@ final class SettingsManager {
     // MARK: - Launch at Login
 
     var launchAtLogin: Bool {
-        get { defaults.bool(forKey: Keys.launchAtLogin) }
+        get {
+            guard defaults.usesSystemPreferences else {
+                return defaults.bool(forKey: Keys.launchAtLogin)
+            }
+
+            let enabled = launchAtLoginService.status.isEnabled
+            defaults.set(enabled, forKey: Keys.launchAtLogin)
+            return enabled
+        }
         set {
-            defaults.set(newValue, forKey: Keys.launchAtLogin)
-            updateLaunchAtLogin(newValue)
+            setLaunchAtLogin(newValue)
         }
     }
 
-    private func updateLaunchAtLogin(_ enabled: Bool) {
-        if #available(macOS 13.0, *) {
-            do {
-                if enabled {
-                    try SMAppService.mainApp.register()
-                } else {
-                    try SMAppService.mainApp.unregister()
-                }
-            } catch {
-                KeyLightLog("Failed to update launch at login: \(error)")
-                // Revert the stored value since the system state didn't change
-                defaults.set(!enabled, forKey: Keys.launchAtLogin)
-            }
+    /// Applies a launch-at-login request and returns the system result for
+    /// coordinators that need to distinguish approval from operation failure.
+    /// The legacy preference mirrors only the authoritative resulting state.
+    @discardableResult
+    func setLaunchAtLogin(_ enabled: Bool) -> LaunchAtLoginChangeResult {
+        guard defaults.usesSystemPreferences else {
+            defaults.set(enabled, forKey: Keys.launchAtLogin)
+            return LaunchAtLoginChangeResult(
+                requestedEnabled: enabled,
+                status: enabled ? .enabled : .disabled,
+                outcome: .applied
+            )
         }
+
+        let result = launchAtLoginService.setEnabled(enabled)
+        defaults.set(result.status.isEnabled, forKey: Keys.launchAtLogin)
+
+        if case .failed = result.outcome {
+            KeyLightLogger.storage.error("Launch-at-login change failed")
+        }
+        return result
     }
 
     // MARK: - Color Mode
-
-    enum ColorMode: String, CaseIterable, Codable {
-        case solid = "solid"
-        case positionGradient = "positionGradient"  // Left to right gradient
-        case randomPerKey = "randomPerKey"
-        case rainbow = "rainbow"  // Cycles through colors
-    }
 
     var colorMode: ColorMode {
         get {
@@ -232,130 +412,391 @@ final class SettingsManager {
         set { defaults.set(newValue.rawValue, forKey: Keys.colorMode) }
     }
 
-    // MARK: - Themes
-
-    struct Theme: Codable, Identifiable {
-        var id = UUID()
-        var name: String
-        var colorHex: String
-        var opacity: Double
-        var size: Double
-        var width: Double
-        var glowRoundness: Double
-        var glowFullness: Double
-        var fadeDuration: Double
-        var colorMode: ColorMode
-        var gradientStartHex: String?
-        var gradientEndHex: String?
-
-        enum CodingKeys: String, CodingKey {
-            case id
-            case name
-            case colorHex
-            case opacity
-            case size
-            case width
-            case glowRoundness
-            case glowFullness
-            case fadeDuration
-            case colorMode
-            case gradientStartHex
-            case gradientEndHex
-        }
-
-        init(
-            id: UUID = UUID(),
-            name: String,
-            colorHex: String,
-            opacity: Double,
-            size: Double,
-            width: Double,
-            glowRoundness: Double = 1.0,
-            glowFullness: Double = 0.5,
-            fadeDuration: Double,
-            colorMode: ColorMode,
-            gradientStartHex: String?,
-            gradientEndHex: String?
-        ) {
-            self.id = id
-            self.name = name
-            self.colorHex = colorHex
-            self.opacity = opacity
-            self.size = size
-            self.width = width
-            self.glowRoundness = glowRoundness
-            self.glowFullness = glowFullness
-            self.fadeDuration = fadeDuration
-            self.colorMode = colorMode
-            self.gradientStartHex = gradientStartHex
-            self.gradientEndHex = gradientEndHex
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            id = (try? container.decode(UUID.self, forKey: .id)) ?? UUID()
-            name = (try? container.decode(String.self, forKey: .name)) ?? "Imported"
-            colorHex = (try? container.decode(String.self, forKey: .colorHex)) ?? "68B8FF"
-            opacity = (try? container.decode(Double.self, forKey: .opacity)) ?? 0.8013
-            size = (try? container.decode(Double.self, forKey: .size)) ?? 80.5536
-            width = (try? container.decode(Double.self, forKey: .width)) ?? 1.0
-            glowRoundness = (try? container.decode(Double.self, forKey: .glowRoundness)) ?? 0.7069
-            glowFullness = (try? container.decode(Double.self, forKey: .glowFullness)) ?? 0.6046
-            fadeDuration = (try? container.decode(Double.self, forKey: .fadeDuration)) ?? 1.0004
-
-            if let mode = try? container.decode(ColorMode.self, forKey: .colorMode) {
-                colorMode = mode
-            } else {
-                let rawMode = (try? container.decode(String.self, forKey: .colorMode)) ?? ColorMode.positionGradient.rawValue
-                colorMode = rawMode == "gradient" ? .positionGradient : (ColorMode(rawValue: rawMode) ?? .positionGradient)
+    var effectStyle: EffectStyle {
+        get {
+            guard let rawValue = defaults.string(forKey: Keys.effectStyle) else {
+                return .classicGlow
             }
+            let parsed = EffectStyle(rawValue: rawValue) ?? .classicGlow
+            let supported = parsed.supportedStyle
+            if supported.rawValue != rawValue {
+                defaults.set(supported.rawValue, forKey: Keys.effectStyle)
+            }
+            return supported
+        }
+        set {
+            defaults.set(
+                newValue.supportedStyle.rawValue,
+                forKey: Keys.effectStyle
+            )
+        }
+    }
 
-            gradientStartHex = try? container.decode(String.self, forKey: .gradientStartHex)
-            gradientEndHex = try? container.decode(String.self, forKey: .gradientEndHex)
+    var chordAppearance: ChordAppearance {
+        get {
+            ChordAppearance(
+                style: defaults.string(forKey: Keys.chordSurfaceStyle)
+                    .flatMap(ChordSurfaceStyle.init(rawValue:))
+                    ?? .naturalMerge,
+                intensityMultiplier: validated(
+                    defaults.object(forKey: Keys.chordIntensityMultiplier)
+                        as? Double ?? 1,
+                    range: ChordAppearance.intensityRange,
+                    default: 1
+                )
+            )
+        }
+        set {
+            let normalized = newValue.normalized
+            defaults.set(
+                normalized.style.rawValue,
+                forKey: Keys.chordSurfaceStyle
+            )
+            defaults.set(
+                normalized.intensityMultiplier,
+                forKey: Keys.chordIntensityMultiplier
+            )
+        }
+    }
+
+    var powerSavingMode: PowerSavingMode {
+        get {
+            defaults.string(forKey: Keys.powerSavingMode)
+                .flatMap(PowerSavingMode.init(rawValue:))
+                ?? .automatic
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Keys.powerSavingMode)
+        }
+    }
+
+    var surfaceShapeProfile: SurfaceShapeProfile {
+        get {
+            guard let rawValue = defaults.string(forKey: Keys.surfaceShapeProfile) else {
+                return .currentWave
+            }
+            return SurfaceShapeProfile.persistedValue(rawValue: rawValue)
+                ?? .currentWave
+        }
+        set { defaults.set(newValue.rawValue, forKey: Keys.surfaceShapeProfile) }
+    }
+
+    /// Compatibility-safe value snapshot over the existing color preference keys.
+    var colorConfiguration: ColorConfiguration {
+        get {
+            ColorConfiguration(
+                mode: colorMode,
+                solidHex: glowColorHex,
+                gradientStartHex: gradientStartHex,
+                gradientEndHex: gradientEndHex
+            )
+        }
+        set {
+            colorMode = newValue.mode
+            glowColorHex = newValue.solidHex
+            gradientStartHex = newValue.gradientStartHex
+            gradientEndHex = newValue.gradientEndHex
+        }
+    }
+
+    /// Compatibility-safe value snapshot over the existing effect preference keys.
+    var effectConfiguration: EffectConfiguration {
+        get {
+            validatedEffectConfiguration(EffectConfiguration(
+                style: effectStyle,
+                shapeProfile: surfaceShapeProfile,
+                color: colorConfiguration,
+                opacity: glowOpacity,
+                refractionStrength: physicalRefractionStrength,
+                height: glowSize,
+                width: glowWidth,
+                roundness: glowRoundness,
+                hardness: glowFullness,
+                fadeDuration: fadeDuration
+            ), for: effectStyle)
+        }
+        set {
+            let normalized = validatedEffectConfiguration(
+                newValue,
+                for: newValue.style
+            )
+            writeCurrentEffectConfiguration(normalized)
+            setEffectConfiguration(normalized, for: normalized.style)
+        }
+    }
+
+    /// Returns the independently persisted controls for one supported effect.
+    /// Missing profiles receive a visible, route-appropriate default without
+    /// borrowing the currently selected effect's sliders.
+    func effectConfiguration(for requestedStyle: EffectStyle) -> EffectConfiguration {
+        let style = requestedStyle.supportedStyle
+        let profiles = loadEffectConfigurations()
+        return profiles[style.rawValue]
+            .map { validatedEffectConfiguration($0, for: style) }
+            ?? .defaultConfiguration(for: style)
+    }
+
+    func setEffectConfiguration(
+        _ configuration: EffectConfiguration,
+        for requestedStyle: EffectStyle
+    ) {
+        let style = requestedStyle.supportedStyle
+        var profiles = loadEffectConfigurations()
+        profiles[style.rawValue] = validatedEffectConfiguration(
+            configuration,
+            for: style
+        )
+        persistEffectConfigurations(profiles)
+    }
+
+    private func initializeEffectConfigurationsIfNeeded() {
+        let selectedStyle = effectStyle.supportedStyle
+        var profiles = loadEffectConfigurations()
+
+        // The established scalar keys remain the compatibility boundary for
+        // older builds. Only on first migration are they authoritative for the
+        // currently selected route; subsequent launches preserve every route's
+        // independently saved profile.
+        if profiles.isEmpty {
+            profiles[selectedStyle.rawValue] = validatedEffectConfiguration(
+                currentScalarEffectConfiguration(style: selectedStyle),
+                for: selectedStyle
+            )
         }
 
-        static let defaultTheme = Theme(
-            name: "current",
-            colorHex: "68B8FF",
-            opacity: 0.8013,
-            size: 80.5536,
-            width: 1.0,
-            glowRoundness: 0.7069,
-            glowFullness: 0.6046,
-            fadeDuration: 1.0004,
-            colorMode: .positionGradient,
-            gradientStartHex: "68B8FF",
-            gradientEndHex: "00E69A"
+        for style in EffectStyle.allCases where profiles[style.rawValue] == nil {
+            profiles[style.rawValue] = .defaultConfiguration(for: style)
+        }
+
+        persistEffectConfigurations(profiles)
+        if let selected = profiles[selectedStyle.rawValue] {
+            writeCurrentEffectConfiguration(selected)
+        }
+    }
+
+    private func loadEffectConfigurations() -> [String: EffectConfiguration] {
+        guard let data = defaults.data(
+            forKey: Keys.effectConfigurationsByStyle
+        ),
+        data.count < Self.maxUserDefaultsDataSize,
+        let decoded = try? JSONDecoder().decode(
+            [String: EffectConfiguration].self,
+            from: data
+        ) else {
+            return [:]
+        }
+
+        var normalized: [String: EffectConfiguration] = [:]
+        for (rawStyle, configuration) in decoded {
+            let style = (
+                EffectStyle(rawValue: rawStyle)
+                    ?? configuration.style
+            ).supportedStyle
+            normalized[style.rawValue] = validatedEffectConfiguration(
+                configuration,
+                for: style
+            )
+        }
+        return normalized
+    }
+
+    private func persistEffectConfigurations(
+        _ profiles: [String: EffectConfiguration]
+    ) {
+        let supportedProfiles = Dictionary(uniqueKeysWithValues:
+            EffectStyle.allCases.map { style in
+                let configuration = profiles[style.rawValue]
+                    ?? .defaultConfiguration(for: style)
+                return (
+                    style.rawValue,
+                    validatedEffectConfiguration(configuration, for: style)
+                )
+            }
+        )
+        do {
+            defaults.set(
+                try JSONEncoder().encode(supportedProfiles),
+                forKey: Keys.effectConfigurationsByStyle
+            )
+        } catch {
+            KeyLightLogger.storage.error(
+                "Effect settings profiles could not be encoded"
+            )
+        }
+    }
+
+    private func currentScalarEffectConfiguration(
+        style: EffectStyle
+    ) -> EffectConfiguration {
+        EffectConfiguration(
+            style: style.supportedStyle,
+            shapeProfile: surfaceShapeProfile,
+            color: colorConfiguration,
+            opacity: glowOpacity,
+            refractionStrength: physicalRefractionStrength,
+            height: glowSize,
+            width: glowWidth,
+            roundness: glowRoundness,
+            hardness: glowFullness,
+            fadeDuration: fadeDuration
         )
     }
+
+    private func writeCurrentEffectConfiguration(
+        _ configuration: EffectConfiguration
+    ) {
+        let normalized = validatedEffectConfiguration(
+            configuration,
+            for: configuration.style
+        )
+        effectStyle = normalized.style
+        surfaceShapeProfile = normalized.shapeProfile
+        colorConfiguration = normalized.color
+        glowOpacity = normalized.opacity
+        physicalRefractionStrength = normalized.refractionStrength
+        glowSize = normalized.height
+        glowWidth = normalized.width
+        glowRoundness = normalized.roundness
+        glowFullness = normalized.hardness
+        fadeDuration = normalized.fadeDuration
+    }
+
+    private func validatedEffectConfiguration(
+        _ configuration: EffectConfiguration,
+        for requestedStyle: EffectStyle
+    ) -> EffectConfiguration {
+        let style = requestedStyle.supportedStyle
+        return EffectConfiguration(
+            style: style,
+            shapeProfile: .currentWave,
+            color: ColorConfiguration(
+                mode: configuration.color.mode,
+                solidHex: sanitizedHex(configuration.color.solidHex),
+                gradientStartHex: sanitizedHex(
+                    configuration.color.gradientStartHex
+                ),
+                gradientEndHex: sanitizedHex(
+                    configuration.color.gradientEndHex
+                )
+            ),
+            opacity: style == .solidBlack
+                ? 1.0
+                : validated(
+                    configuration.opacity,
+                    range: 0.0...1.0,
+                    default: 0.8013
+                ),
+            refractionStrength: validated(
+                configuration.refractionStrength,
+                range: 0.5...2.5,
+                default: 1.0
+            ),
+            height: validated(
+                configuration.height,
+                range: 4.0...200.0,
+                default: 80.5536
+            ),
+            width: validated(
+                configuration.width,
+                range: 0.1...5.0,
+                default: 1.0
+            ),
+            roundness: validated(
+                configuration.roundness,
+                range: 0.0...1.0,
+                default: 0.7069
+            ),
+            hardness: validated(
+                configuration.hardness,
+                range: 0.0...1.0,
+                default: 0.6046
+            ),
+            fadeDuration: validated(
+                configuration.fadeDuration,
+                range: 0.05...5.0,
+                default: 1.0004
+            )
+        )
+    }
+
+    /// A read-only value snapshot. Launch-at-login writes continue through the
+    /// established setter because they also reconcile the system login item.
+    var appPreferences: AppPreferences {
+        AppPreferences(
+            isEnabled: isEnabled,
+            launchAtLogin: launchAtLogin,
+            effect: effectConfiguration,
+            chordAppearance: chordAppearance,
+            powerSavingMode: powerSavingMode
+        )
+    }
+
+    // MARK: - Themes
 
     /// Maximum data size for UserDefaults JSON reads (guards against injection from other processes)
     private static let maxUserDefaultsDataSize = 500_000  // 500KB
 
+    private static func recordIndicesNeedingStableIDRepair(_ data: Data) -> Set<Int>? {
+        guard let records = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+
+        return Set(records.indices.filter { index in
+            guard let rawID = records[index]["id"] as? String else { return true }
+            return UUID(uuidString: rawID) == nil
+        })
+    }
+
     var savedThemes: [Theme] {
         get {
-            guard let data = defaults.data(forKey: Keys.savedThemes),
-                  data.count < Self.maxUserDefaultsDataSize,
-                  let themes = try? JSONDecoder().decode([Theme].self, from: data) else {
-                return [Theme.defaultTheme]
-            }
-            return themes
+            loadStoredThemes() ?? [Theme.defaultTheme]
         }
         set {
             do {
                 let data = try JSONEncoder().encode(newValue)
                 defaults.set(data, forKey: Keys.savedThemes)
             } catch {
-                KeyLightLog("Failed to save themes: \(error)")
+                KeyLightLogger.storage.error("Saved themes could not be encoded")
             }
         }
+    }
+
+    private func loadStoredThemes() -> [Theme]? {
+        guard let data = defaults.data(forKey: Keys.savedThemes),
+              data.count < Self.maxUserDefaultsDataSize,
+              var themes = try? JSONDecoder().decode([Theme].self, from: data) else {
+            return nil
+        }
+        if let repairIndices = Self.recordIndicesNeedingStableIDRepair(data), !repairIndices.isEmpty {
+            themes = persistRepairedThemes(themes, repairIndices: repairIndices)
+        }
+        return themes
     }
 
     var currentThemeName: String {
         get { defaults.string(forKey: Keys.currentThemeName) ?? Theme.defaultTheme.name }
         set {
             defaults.set(newValue, forKey: Keys.currentThemeName)
-            notifyStorageChanged()
+            if let theme = savedThemes.first(where: { $0.name == newValue }) {
+                writeSelectionID(theme.id, forKey: Keys.activeThemeID)
+            } else {
+                writeSelectionID(nil, forKey: Keys.activeThemeID)
+            }
+        }
+    }
+
+    var activeThemeID: UUID? {
+        get {
+            let themes = savedThemes
+            guard let id = selectionID(forKey: Keys.activeThemeID),
+                  themes.contains(where: { $0.id == id }) else {
+                return nil
+            }
+            return id
+        }
+        set {
+            let selection = newValue.flatMap { id in savedThemes.first(where: { $0.id == id }) }
+            persistThemeSelection(selection)
         }
     }
 
@@ -363,21 +804,233 @@ final class SettingsManager {
         get { defaults.string(forKey: Keys.currentKeyMappingProfileName) ?? "None" }
         set {
             defaults.set(newValue, forKey: Keys.currentKeyMappingProfileName)
-            notifyStorageChanged()
+            if let profile = savedKeyMappingProfiles.first(where: { $0.name == newValue }) {
+                writeSelectionID(profile.id, forKey: Keys.activeLayoutID)
+            } else {
+                writeSelectionID(nil, forKey: Keys.activeLayoutID)
+            }
         }
+    }
+
+    var activeLayoutID: UUID? {
+        get {
+            let profiles = savedKeyMappingProfiles
+            guard let id = selectionID(forKey: Keys.activeLayoutID),
+                  profiles.contains(where: { $0.id == id }) else {
+                return nil
+            }
+            return id
+        }
+        set {
+            let selection = newValue.flatMap { id in savedKeyMappingProfiles.first(where: { $0.id == id }) }
+            persistLayoutSelection(selection)
+        }
+    }
+
+    var overlayDisplaySelection: OverlayDisplaySelection {
+        get { OverlayDisplaySelection(persistedValue: defaults.string(forKey: Keys.overlayDisplaySelection)) }
+        set { defaults.set(newValue.persistedValue, forKey: Keys.overlayDisplaySelection) }
+    }
+
+    var mirroredDisplayIDs: Set<String> {
+        get {
+            let stored = defaults.object(forKey: Keys.mirroredDisplayIDs)
+                as? [String] ?? []
+            return Set(stored.compactMap { value in
+                let trimmed = value.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                guard !trimmed.isEmpty, trimmed.count <= 200 else {
+                    return nil
+                }
+                return trimmed
+            }.prefix(16))
+        }
+        set {
+            let normalized = newValue.compactMap { value -> String? in
+                let trimmed = value.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                return !trimmed.isEmpty && trimmed.count <= 200
+                    ? trimmed
+                    : nil
+            }
+                .sorted()
+                .prefix(16)
+            defaults.set(Array(normalized), forKey: Keys.mirroredDisplayIDs)
+        }
+    }
+
+    var globalShortcut: GlobalShortcut {
+        get {
+            guard let data = defaults.data(forKey: Keys.globalShortcut),
+                  data.count < 1_024,
+                  let decoded = try? JSONDecoder().decode(GlobalShortcut.self, from: data),
+                  let validated = GlobalShortcut(
+                    keyCode: decoded.keyCode,
+                    modifiers: decoded.modifiers
+                  ) else {
+                return .default
+            }
+            return validated
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.globalShortcut)
+        }
+    }
+
+    var displayLayoutProfileBindings: [String: UUID] {
+        get {
+            guard let stored = defaults.dictionary(forKey: Keys.displayLayoutProfileBindings) else {
+                return [:]
+            }
+            let validProfileIDs = Set(savedKeyMappingProfiles.map(\.id))
+            var bindings: [String: UUID] = [:]
+            for persistentDisplayID in stored.keys.sorted().prefix(32) {
+                guard !persistentDisplayID.isEmpty,
+                      persistentDisplayID.count <= 200,
+                      let value = stored[persistentDisplayID] as? String,
+                      let profileID = UUID(uuidString: value),
+                      validProfileIDs.contains(profileID) else {
+                    continue
+                }
+                bindings[persistentDisplayID] = profileID
+            }
+            return bindings
+        }
+        set {
+            let validProfileIDs = Set(savedKeyMappingProfiles.map(\.id))
+            var encoded: [String: String] = [:]
+            for persistentDisplayID in newValue.keys.sorted().prefix(32) {
+                guard !persistentDisplayID.isEmpty,
+                      persistentDisplayID.count <= 200,
+                      let profileID = newValue[persistentDisplayID],
+                      validProfileIDs.contains(profileID) else {
+                    continue
+                }
+                encoded[persistentDisplayID] = profileID.uuidString
+            }
+            if encoded.isEmpty {
+                defaults.removeObject(forKey: Keys.displayLayoutProfileBindings)
+            } else {
+                defaults.set(encoded, forKey: Keys.displayLayoutProfileBindings)
+            }
+        }
+    }
+
+    func setLayoutProfileBinding(_ profileID: UUID?, forDisplay persistentDisplayID: String) {
+        var bindings = displayLayoutProfileBindings
+        bindings[persistentDisplayID] = profileID
+        displayLayoutProfileBindings = bindings
+    }
+
+    private func selectionID(forKey key: String) -> UUID? {
+        defaults.string(forKey: key).flatMap(UUID.init(uuidString:))
+    }
+
+    private func writeSelectionID(_ id: UUID?, forKey key: String) {
+        if let id {
+            defaults.set(id.uuidString, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private func persistThemeSelection(_ theme: Theme?) {
+        writeSelectionID(theme?.id, forKey: Keys.activeThemeID)
+        defaults.set(theme?.name ?? Theme.defaultTheme.name, forKey: Keys.currentThemeName)
+    }
+
+    private func persistLayoutSelection(_ profile: KeyMappingProfile?) {
+        writeSelectionID(profile?.id, forKey: Keys.activeLayoutID)
+        defaults.set(profile?.name ?? "None", forKey: Keys.currentKeyMappingProfileName)
+    }
+
+    private func reconcileThemeSelection(in themes: [Theme]) {
+        let storedThemeID = selectionID(forKey: Keys.activeThemeID)
+        let legacyThemeName = defaults.string(forKey: Keys.currentThemeName) ?? Theme.defaultTheme.name
+        let selectedTheme = storedThemeID.flatMap { id in themes.first(where: { $0.id == id }) }
+            ?? themes.first(where: { $0.name == legacyThemeName })
+            ?? themes.first
+        persistThemeSelection(selectedTheme)
+    }
+
+    private func reconcileLayoutSelection(in profiles: [KeyMappingProfile]) {
+        let storedLayoutID = selectionID(forKey: Keys.activeLayoutID)
+        let legacyLayoutName = defaults.string(forKey: Keys.currentKeyMappingProfileName) ?? "None"
+        let selectedProfile = storedLayoutID.flatMap { id in profiles.first(where: { $0.id == id }) }
+            ?? profiles.first(where: { $0.name == legacyLayoutName })
+            ?? profiles.first
+        persistLayoutSelection(selectedProfile)
+    }
+
+    private func persistRepairedThemes(_ decodedThemes: [Theme], repairIndices: Set<Int>) -> [Theme] {
+        var themes = decodedThemes
+        let storedThemeID = selectionID(forKey: Keys.activeThemeID)
+        let legacyThemeName = defaults.string(forKey: Keys.currentThemeName) ?? Theme.defaultTheme.name
+        if let storedThemeID,
+           !themes.contains(where: { $0.id == storedThemeID }),
+           let selectedIndex = themes.firstIndex(where: { $0.name == legacyThemeName }),
+           repairIndices.contains(selectedIndex) {
+            // If a previous current build had already selected this legacy
+            // record, keep that established identity when an older build strips
+            // the UUID field. Other missing IDs use the deterministic fallback.
+            themes[selectedIndex].id = storedThemeID
+        }
+
+        do {
+            defaults.set(try JSONEncoder().encode(themes), forKey: Keys.savedThemes)
+            reconcileThemeSelection(in: themes)
+        } catch {
+            KeyLightLogger.storage.error("Legacy theme identities could not be repaired")
+        }
+        return themes
+    }
+
+    private func persistRepairedLayoutProfiles(
+        _ decodedProfiles: [KeyMappingProfile],
+        repairIndices: Set<Int>
+    ) -> [KeyMappingProfile] {
+        var profiles = decodedProfiles
+        let storedLayoutID = selectionID(forKey: Keys.activeLayoutID)
+        let legacyLayoutName = defaults.string(forKey: Keys.currentKeyMappingProfileName) ?? "None"
+        if let storedLayoutID,
+           !profiles.contains(where: { $0.id == storedLayoutID }),
+           let selectedIndex = profiles.firstIndex(where: { $0.name == legacyLayoutName }),
+           repairIndices.contains(selectedIndex) {
+            profiles[selectedIndex].id = storedLayoutID
+        }
+
+        do {
+            defaults.set(try JSONEncoder().encode(profiles), forKey: Keys.keyMappingProfiles)
+            reconcileLayoutSelection(in: profiles)
+        } catch {
+            KeyLightLogger.storage.error("Legacy layout identities could not be repaired")
+        }
+        return profiles
     }
 
     func saveTheme(_ theme: Theme) {
         var theme = theme
-        theme.name = theme.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !theme.name.isEmpty else { return }
+        guard let normalizedName = PersistenceValidation.normalizedName(theme.name) else { return }
+        theme.name = normalizedName
         theme.colorHex = sanitizedHex(theme.colorHex)
         theme.opacity = validated(theme.opacity, range: 0.0...1.0, default: 0.8013)
-        theme.size = validated(theme.size, range: 10.0...200.0, default: 80.5536)
+        theme.refractionStrength = validated(
+            theme.refractionStrength,
+            range: 0.5...2.5,
+            default: 1.0
+        )
+        theme.size = validated(theme.size, range: 4.0...200.0, default: 80.5536)
         theme.width = validated(theme.width, range: 0.1...5.0, default: 1.0)
         theme.glowRoundness = validated(theme.glowRoundness, range: 0.0...1.0, default: 0.7069)
         theme.glowFullness = validated(theme.glowFullness, range: 0.0...1.0, default: 0.6046)
         theme.fadeDuration = validated(theme.fadeDuration, range: 0.05...5.0, default: 1.0004)
+        theme.effectStyle = (
+            EffectStyle(rawValue: theme.effectStyle.rawValue) ?? .classicGlow
+        ).supportedStyle
+        theme.shapeProfile = .currentWave
         if let startHex = theme.gradientStartHex {
             theme.gradientStartHex = sanitizedHex(startHex)
         }
@@ -387,27 +1040,37 @@ final class SettingsManager {
 
         var themes = savedThemes
         if let index = themes.firstIndex(where: { $0.name == theme.name }) {
+            theme.id = themes[index].id
+            themes[index] = theme
+        } else if let index = themes.firstIndex(where: { $0.id == theme.id }) {
+            let lowercasedName = theme.name.lowercased()
+            guard !themes.contains(where: { $0.id != theme.id && $0.name.lowercased() == lowercasedName }) else {
+                return
+            }
             themes[index] = theme
         } else {
             themes.append(theme)
         }
         savedThemes = themes
-        notifyStorageChanged()
+        if activeThemeID == theme.id || currentThemeName == theme.name {
+            persistThemeSelection(theme)
+        }
     }
 
     func deleteTheme(named name: String) {
         var themes = savedThemes
+        let removedIDs = Set(themes.filter { $0.name == name }.map(\.id))
+        let storedActiveID = selectionID(forKey: Keys.activeThemeID)
+        let wasActive = currentThemeName == name || storedActiveID.map(removedIDs.contains) == true
         themes.removeAll { $0.name == name }
         if themes.isEmpty {
             themes = [Theme.defaultTheme]
         }
         savedThemes = themes
 
-        // Reset current theme if the deleted one was active
-        if currentThemeName == name {
-            currentThemeName = themes.first?.name ?? Theme.defaultTheme.name
+        if wasActive {
+            persistThemeSelection(themes.first)
         }
-        notifyStorageChanged()
     }
 
     func restoreTheme(_ theme: Theme, at index: Int, makeCurrent: Bool) {
@@ -417,186 +1080,43 @@ final class SettingsManager {
         themes.insert(theme, at: safeIndex)
         savedThemes = themes
         if makeCurrent {
-            currentThemeName = theme.name
+            persistThemeSelection(theme)
         }
-        notifyStorageChanged()
     }
 
-    func renameTheme(from oldName: String, to newName: String) {
+    @discardableResult
+    func renameTheme(from oldName: String, to newName: String) -> Bool {
         var themes = savedThemes
-        guard let index = themes.firstIndex(where: { $0.name == oldName }) else { return }
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard let index = themes.firstIndex(where: { $0.name == oldName }) else { return false }
+        guard let trimmed = PersistenceValidation.normalizedName(newName) else { return false }
         let oldNameLower = oldName.lowercased()
         let trimmedLower = trimmed.lowercased()
         let hasCollision = themes.contains { theme in
             theme.name.lowercased() == trimmedLower && theme.name.lowercased() != oldNameLower
         }
-        guard !hasCollision else { return }
+        guard !hasCollision else { return false }
 
+        let renamedThemeID = themes[index].id
+        let wasActive = selectionID(forKey: Keys.activeThemeID) == renamedThemeID || currentThemeName == oldName
         themes[index].name = trimmed
         savedThemes = themes
-        // Update current theme name if it was the renamed theme
-        if currentThemeName == oldName {
-            currentThemeName = trimmed
+        if wasActive {
+            persistThemeSelection(themes[index])
         }
-        notifyStorageChanged()
-    }
-
-    private func sanitizedThemeForImport(_ theme: Theme, fallbackName: String = "Imported Theme") -> Theme {
-        var sanitized = theme
-        let trimmedName = theme.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        sanitized.name = trimmedName.isEmpty ? fallbackName : String(trimmedName.prefix(100))
-        sanitized.colorHex = sanitizedHex(theme.colorHex)
-        sanitized.opacity = validated(theme.opacity, range: 0.0...1.0, default: 0.8013)
-        sanitized.size = validated(theme.size, range: 10.0...200.0, default: 80.5536)
-        sanitized.width = validated(theme.width, range: 0.1...5.0, default: 1.0)
-        sanitized.glowRoundness = validated(theme.glowRoundness, range: 0.0...1.0, default: 0.7069)
-        sanitized.glowFullness = validated(theme.glowFullness, range: 0.0...1.0, default: 0.6046)
-        sanitized.fadeDuration = validated(theme.fadeDuration, range: 0.05...5.0, default: 1.0004)
-        sanitized.gradientStartHex = sanitizedHex(theme.gradientStartHex ?? Self.defaultSolidHex)
-        sanitized.gradientEndHex = sanitizedHex(theme.gradientEndHex ?? Self.defaultGradientEndHex)
-        return sanitized
+        return true
     }
 
     func exportThemeString(_ theme: Theme) -> String? {
-        let sanitized = sanitizedThemeForImport(theme)
-        let encodedName = percentEncodeThemeName(sanitized.name)
-        let mode = sanitized.colorMode.rawValue
-        let color = sanitized.colorHex.uppercased()
-        let opacity = formatThemeNumber(sanitized.opacity)
-        let size = formatThemeNumber(sanitized.size)
-        let width = formatThemeNumber(sanitized.width)
-        let roundness = formatThemeNumber(sanitized.glowRoundness)
-        let hardness = formatThemeNumber(sanitized.glowFullness)
-        let fade = formatThemeNumber(sanitized.fadeDuration)
-        let gstart = (sanitized.gradientStartHex ?? Self.defaultSolidHex).uppercased()
-        let gend = (sanitized.gradientEndHex ?? Self.defaultGradientEndHex).uppercased()
-
-        return [
-            Self.themeStringPrefix,
-            "name=\(encodedName)",
-            "mode=\(mode)",
-            "color=\(color)",
-            "opacity=\(opacity)",
-            "size=\(size)",
-            "width=\(width)",
-            "round=\(roundness)",
-            "hard=\(hardness)",
-            "fade=\(fade)",
-            "gstart=\(gstart)",
-            "gend=\(gend)"
-        ].joined(separator: ";")
+        ThemeStringCodec.encode(theme)
     }
 
     func importThemeString(_ value: String) throws -> Theme {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw invalidThemeStringError()
-        }
-        guard trimmed.count <= Self.maxThemeStringLength else {
-            throw NSError(domain: "KeyLight", code: 11, userInfo: [
-                NSLocalizedDescriptionKey: "Theme string is too large."
-            ])
-        }
-
-        let segments = trimmed.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
-        guard segments.first == Self.themeStringPrefix else {
-            throw invalidThemeStringError()
-        }
-
-        var fields: [String: String] = [:]
-        for segment in segments.dropFirst() {
-            guard !segment.isEmpty,
-                  let splitIndex = segment.firstIndex(of: "="),
-                  splitIndex != segment.startIndex else {
-                throw invalidThemeStringError()
-            }
-
-            let key = String(segment[..<splitIndex])
-            let valueStart = segment.index(after: splitIndex)
-            let parsedValue = String(segment[valueStart...])
-
-            guard Self.themeStringRequiredFields.contains(key),
-                  fields[key] == nil else {
-                throw invalidThemeStringError()
-            }
-            fields[key] = parsedValue
-        }
-
-        guard Set(fields.keys) == Self.themeStringRequiredFields else {
-            throw invalidThemeStringError()
-        }
-
-        guard let encodedName = fields["name"],
-              let decodedName = encodedName.removingPercentEncoding else {
-            throw invalidThemeStringError()
-        }
-
-        guard let modeRaw = fields["mode"],
-              let mode = ColorMode(rawValue: modeRaw) else {
-            throw invalidThemeStringError()
-        }
-
-        guard let color = fields["color"],
-              let opacity = parseThemeNumber(fields["opacity"]),
-              let size = parseThemeNumber(fields["size"]),
-              let width = parseThemeNumber(fields["width"]),
-              let roundness = parseThemeNumber(fields["round"]),
-              let hardness = parseThemeNumber(fields["hard"]),
-              let fade = parseThemeNumber(fields["fade"]),
-              let gstart = fields["gstart"],
-              let gend = fields["gend"] else {
-            throw invalidThemeStringError()
-        }
-
-        return sanitizedThemeForImport(
-            Theme(
-                name: decodedName,
-                colorHex: color,
-                opacity: opacity,
-                size: size,
-                width: width,
-                glowRoundness: roundness,
-                glowFullness: hardness,
-                fadeDuration: fade,
-                colorMode: mode,
-                gradientStartHex: gstart,
-                gradientEndHex: gend
-            )
-        )
-    }
-
-    private func invalidThemeStringError() -> NSError {
-        NSError(domain: "KeyLight", code: 10, userInfo: [
-            NSLocalizedDescriptionKey: Self.invalidThemeStringMessage
-        ])
-    }
-
-    private func formatThemeNumber(_ value: Double) -> String {
-        String(format: "%.4f", value)
-    }
-
-    private func parseThemeNumber(_ raw: String?) -> Double? {
-        guard let raw, let parsed = Double(raw), parsed.isFinite else { return nil }
-        return parsed
-    }
-
-    private func percentEncodeThemeName(_ value: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.~"))
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        try ThemeStringCodec.decode(value)
     }
 
     // MARK: - Gradient Presets
 
-    struct GradientPreset: Codable, Identifiable, Equatable {
-        var id = UUID()
-        var startHex: String
-        var endHex: String
-        var name: String?
-    }
-
-    private static let defaultGradientPresets: [GradientPreset] = [
+    static let defaultGradientPresets: [GradientPreset] = [
         GradientPreset(startHex: defaultSolidHex, endHex: defaultGradientEndHex, name: "Ocean"),
         GradientPreset(startHex: "C77DFF", endHex: "FF6B9D", name: "Neon"),
         GradientPreset(startHex: "FF6B6B", endHex: "FFD93D", name: "Sunset"),
@@ -626,7 +1146,7 @@ final class SettingsManager {
                 let data = try JSONEncoder().encode(sanitized)
                 defaults.set(data, forKey: Keys.gradientPresets)
             } catch {
-                KeyLightLog("Failed to save gradient presets: \(error)")
+                KeyLightLogger.storage.error("Gradient presets could not be encoded")
             }
         }
     }
@@ -682,7 +1202,7 @@ final class SettingsManager {
         }
 
         guard manifest.version == 1 else {
-            KeyLightLog("Unsupported bundled preset manifest version: \(manifest.version)")
+            KeyLightLogger.imports.warning("Bundled layout manifest version is unsupported")
             return []
         }
 
@@ -696,9 +1216,8 @@ final class SettingsManager {
     func importBundledLayoutPreset(_ preset: BundledLayoutPreset, forcedName: String? = nil) throws -> KeyMappingProfile {
         let data = try loadBundledPresetData(resourcePath: preset.resourcePath)
         var profile = try importLayoutProfileData(data)
-        let preferredName = (forcedName ?? preset.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !preferredName.isEmpty {
-            profile.name = String(preferredName.prefix(100))
+        if let preferredName = PersistenceValidation.normalizedName(forcedName ?? preset.displayName) {
+            profile.name = preferredName
         }
         return profile
     }
@@ -719,7 +1238,7 @@ final class SettingsManager {
 
         guard let baseURL = Bundle.main.resourceURL?.appendingPathComponent("VariantPresets", isDirectory: true) else {
             throw NSError(domain: "KeyLight", code: 24, userInfo: [
-                NSLocalizedDescriptionKey: "Bundled presets are unavailable in this build."
+                NSLocalizedDescriptionKey: String(localized: "Bundled presets are unavailable in this build.")
             ])
         }
 
@@ -738,104 +1257,78 @@ final class SettingsManager {
             }
             #endif
             throw NSError(domain: "KeyLight", code: 24, userInfo: [
-                NSLocalizedDescriptionKey: "Bundled preset file not found: \(normalizedPath)."
+                NSLocalizedDescriptionKey: String(localized: "Bundled preset file not found: \(normalizedPath).")
             ])
         }
     }
 
     // MARK: - Key Mapping Profiles
 
-    struct KeyMappingProfile: Codable, Identifiable {
-        var id = UUID()
-        var name: String
-        var keyOffsets: [UInt16: CGFloat]
-        var keyWidthOverrides: [UInt16: CGFloat]
-
-        enum CodingKeys: String, CodingKey {
-            case id, name, keyOffsets, keyWidthOverrides
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(id, forKey: .id)
-            try container.encode(name, forKey: .name)
-            // Convert UInt16 keys to String for JSON compatibility
-            let stringKeyedOffsets = keyOffsets.reduce(into: [String: CGFloat]()) { result, pair in
-                result[String(pair.key)] = pair.value
-            }
-            try container.encode(stringKeyedOffsets, forKey: .keyOffsets)
-
-            let stringKeyedWidths = keyWidthOverrides.reduce(into: [String: CGFloat]()) { result, pair in
-                result[String(pair.key)] = pair.value
-            }
-            try container.encode(stringKeyedWidths, forKey: .keyWidthOverrides)
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            id = try container.decode(UUID.self, forKey: .id)
-            name = try container.decode(String.self, forKey: .name)
-            let stringKeyed = try container.decode([String: CGFloat].self, forKey: .keyOffsets)
-            keyOffsets = stringKeyed.reduce(into: [UInt16: CGFloat]()) { result, pair in
-                if let keyCode = UInt16(pair.key) {
-                    result[keyCode] = pair.value
-                }
-            }
-
-            let widthKeyed = (try? container.decode([String: CGFloat].self, forKey: .keyWidthOverrides)) ?? [:]
-            keyWidthOverrides = widthKeyed.reduce(into: [UInt16: CGFloat]()) { result, pair in
-                if let keyCode = UInt16(pair.key) {
-                    result[keyCode] = pair.value
-                }
-            }
-        }
-
-        init(name: String, keyOffsets: [UInt16: CGFloat], keyWidthOverrides: [UInt16: CGFloat] = [:]) {
-            self.name = name
-            self.keyOffsets = keyOffsets
-            self.keyWidthOverrides = keyWidthOverrides
-        }
-    }
-
     var savedKeyMappingProfiles: [KeyMappingProfile] {
         get {
-            guard let data = defaults.data(forKey: Keys.keyMappingProfiles),
-                  data.count < Self.maxUserDefaultsDataSize,
-                  let profiles = try? JSONDecoder().decode([KeyMappingProfile].self, from: data) else {
-                return []
-            }
-            return profiles
+            loadStoredLayoutProfiles() ?? []
         }
         set {
             do {
                 let data = try JSONEncoder().encode(newValue)
                 defaults.set(data, forKey: Keys.keyMappingProfiles)
             } catch {
-                KeyLightLog("Failed to save key mapping profiles: \(error)")
+                KeyLightLogger.storage.error("Saved layouts could not be encoded")
             }
         }
     }
 
-    func saveKeyMappingProfile(_ profile: KeyMappingProfile) {
+    private func loadStoredLayoutProfiles() -> [KeyMappingProfile]? {
+        guard let data = defaults.data(forKey: Keys.keyMappingProfiles),
+              data.count < Self.maxUserDefaultsDataSize,
+              var profiles = try? JSONDecoder().decode([KeyMappingProfile].self, from: data) else {
+            return nil
+        }
+        if let repairIndices = Self.recordIndicesNeedingStableIDRepair(data), !repairIndices.isEmpty {
+            profiles = persistRepairedLayoutProfiles(profiles, repairIndices: repairIndices)
+        }
+        return profiles
+    }
+
+    @discardableResult
+    func saveKeyMappingProfile(_ profile: KeyMappingProfile) -> KeyMappingProfile? {
+        guard let normalizedName = PersistenceValidation.normalizedName(profile.name) else { return nil }
+        var profile = profile
+        profile.name = normalizedName
+        let normalizedLayout = KeyLayoutStore.normalized(KeyLayout(
+            offsets: profile.keyOffsets,
+            widthMultipliers: profile.keyWidthOverrides
+        ))
+        profile.keyOffsets = normalizedLayout.offsets
+        profile.keyWidthOverrides = normalizedLayout.widthMultipliers
         var profiles = savedKeyMappingProfiles
         if let index = profiles.firstIndex(where: { $0.name == profile.name }) {
+            profile.id = profiles[index].id
+            profiles[index] = profile
+        } else if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+            let lowercasedName = profile.name.lowercased()
+            guard !profiles.contains(where: { $0.id != profile.id && $0.name.lowercased() == lowercasedName }) else {
+                return nil
+            }
             profiles[index] = profile
         } else {
             profiles.append(profile)
         }
         savedKeyMappingProfiles = profiles
-        currentKeyMappingProfileName = profile.name
-        notifyStorageChanged()
+        persistLayoutSelection(profile)
+        return profile
     }
 
     func deleteKeyMappingProfile(named name: String) {
         var profiles = savedKeyMappingProfiles
+        let removedIDs = Set(profiles.filter { $0.name == name }.map(\.id))
+        let storedActiveID = selectionID(forKey: Keys.activeLayoutID)
+        let wasActive = currentKeyMappingProfileName == name || storedActiveID.map(removedIDs.contains) == true
         profiles.removeAll { $0.name == name }
         savedKeyMappingProfiles = profiles
-        if currentKeyMappingProfileName == name {
-            currentKeyMappingProfileName = profiles.first?.name ?? "None"
+        if wasActive {
+            persistLayoutSelection(profiles.first)
         }
-        notifyStorageChanged()
     }
 
     func restoreKeyMappingProfile(_ profile: KeyMappingProfile, at index: Int, makeCurrent: Bool) {
@@ -845,151 +1338,79 @@ final class SettingsManager {
         profiles.insert(profile, at: safeIndex)
         savedKeyMappingProfiles = profiles
         if makeCurrent {
-            currentKeyMappingProfileName = profile.name
+            persistLayoutSelection(profile)
         }
-        notifyStorageChanged()
     }
 
-    func renameKeyMappingProfile(from oldName: String, to newName: String) {
+    @discardableResult
+    func renameKeyMappingProfile(from oldName: String, to newName: String) -> Bool {
         var profiles = savedKeyMappingProfiles
-        guard let index = profiles.firstIndex(where: { $0.name == oldName }) else { return }
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard let index = profiles.firstIndex(where: { $0.name == oldName }) else { return false }
+        guard let trimmed = PersistenceValidation.normalizedName(newName) else { return false }
         let oldNameLower = oldName.lowercased()
         let trimmedLower = trimmed.lowercased()
         let hasCollision = profiles.contains { profile in
             profile.name.lowercased() == trimmedLower && profile.name.lowercased() != oldNameLower
         }
-        guard !hasCollision else { return }
+        guard !hasCollision else { return false }
 
+        let renamedProfileID = profiles[index].id
+        let wasActive = selectionID(forKey: Keys.activeLayoutID) == renamedProfileID || currentKeyMappingProfileName == oldName
         profiles[index].name = trimmed
         savedKeyMappingProfiles = profiles
-        if currentKeyMappingProfileName == oldName {
-            currentKeyMappingProfileName = trimmed
+        if wasActive {
+            persistLayoutSelection(profiles[index])
         }
-        notifyStorageChanged()
-    }
-
-    private struct LayoutProfileTransferData: Codable {
-        var version: Int
-        var kind: String?
-        var name: String
-        var keyOffsets: [String: CGFloat]
-        var keyWidthOverrides: [String: CGFloat]?
-    }
-
-    private func normalizedImportedWidthOverrides(from overrides: [String: CGFloat]) -> [UInt16: CGFloat] {
-        var decoded: [UInt16: CGFloat] = [:]
-        decoded.reserveCapacity(overrides.count)
-        for (key, value) in overrides {
-            guard let keyCode = UInt16(key), value.isFinite else { continue }
-            decoded[keyCode] = value
-        }
-
-        let allowedKeyCodes = Set(KeyboardLayoutInfo.allKeys.map(\.id))
-        var canonicalValues: [UInt16: CGFloat] = [:]
-        var aliasFallbackValues: [UInt16: CGFloat] = [:]
-
-        for keyCode in decoded.keys.sorted() {
-            guard let value = decoded[keyCode], value.isFinite else { continue }
-            let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: keyCode)
-            guard allowedKeyCodes.contains(canonicalKeyCode) else { continue }
-
-            let clamped = min(max(value, 0.1), 5.0)
-            if keyCode == canonicalKeyCode {
-                canonicalValues[canonicalKeyCode] = clamped
-            } else if aliasFallbackValues[canonicalKeyCode] == nil {
-                aliasFallbackValues[canonicalKeyCode] = clamped
-            }
-        }
-
-        var normalized: [UInt16: CGFloat] = aliasFallbackValues
-        for (keyCode, value) in canonicalValues {
-            normalized[keyCode] = value
-        }
-
-        return normalized
+        return true
     }
 
     func exportLayoutProfileData(_ profile: KeyMappingProfile) -> Data? {
-        let trimmedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return nil }
-
-        let canonicalOffsets = KeyPositionManager.normalizedImportedOffsets(
-            from: profile.keyOffsets.reduce(into: [String: CGFloat]()) { result, pair in
-                result[String(pair.key)] = pair.value
-            }
-        )
-        let canonicalWidths = normalizedImportedWidthOverrides(
-            from: profile.keyWidthOverrides.reduce(into: [String: CGFloat]()) { result, pair in
-                result[String(pair.key)] = pair.value
-            }
-        )
-
-        let payload = LayoutProfileTransferData(
-            version: Self.layoutProfileSchemaVersion,
-            kind: "layoutProfile",
-            name: String(trimmedName.prefix(100)),
-            keyOffsets: canonicalOffsets,
-            keyWidthOverrides: canonicalWidths.reduce(into: [String: CGFloat]()) { result, pair in
-                result[String(pair.key)] = pair.value
-            }
-        )
-
-        do {
-            return try JSONEncoder().encode(payload)
-        } catch {
-            KeyLightLog("Failed to encode layout profile export data: \(error)")
-            return nil
-        }
+        LayoutProfileCodec.encode(profile)
     }
 
     func importLayoutProfileData(_ data: Data) throws -> KeyMappingProfile {
-        guard data.count <= Self.maxLayoutProfileImportSize else {
-            throw NSError(domain: "KeyLight", code: 20, userInfo: [
-                NSLocalizedDescriptionKey: "Layout profile file is too large (max 1MB)."
-            ])
+        try LayoutProfileCodec.decode(data)
+    }
+
+    /// Adds stable selection identities once by matching the established legacy
+    /// names. Both forms remain persisted so older KeyLight builds continue to
+    /// understand the active selections.
+    private func migrateStableSelectionIDsIfNeeded() {
+        // Always decode both collections. Their load paths repair any records
+        // whose UUID field was stripped after the one-time migration ran.
+        // Keep corrupt/oversized storage untouched, matching the legacy path.
+        let themes: [Theme]?
+        if defaults.data(forKey: Keys.savedThemes) == nil {
+            themes = [Theme.defaultTheme]
+        } else {
+            themes = loadStoredThemes()
         }
 
-        let payload: LayoutProfileTransferData
-        do {
-            payload = try JSONDecoder().decode(LayoutProfileTransferData.self, from: data)
-        } catch {
-            throw NSError(domain: "KeyLight", code: 21, userInfo: [
-                NSLocalizedDescriptionKey: Self.invalidLayoutProfileMessage
-            ])
+        let profiles: [KeyMappingProfile]?
+        if defaults.data(forKey: Keys.keyMappingProfiles) == nil {
+            profiles = []
+        } else {
+            profiles = loadStoredLayoutProfiles()
         }
 
-        guard payload.version <= Self.layoutProfileSchemaVersion else {
-            throw NSError(domain: "KeyLight", code: 22, userInfo: [
-                NSLocalizedDescriptionKey: "Unsupported layout profile version (\(payload.version)). Please update KeyLight."
-            ])
-        }
-        if let kind = payload.kind, kind != "layoutProfile" {
-            throw NSError(domain: "KeyLight", code: 21, userInfo: [
-                NSLocalizedDescriptionKey: Self.invalidLayoutProfileMessage
-            ])
+        guard defaults.integer(forKey: Keys.stableSelectionMigrationVersion) < Self.stableSelectionMigrationVersion else {
+            return
         }
 
-        let trimmedName = payload.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else {
-            throw NSError(domain: "KeyLight", code: 23, userInfo: [
-                NSLocalizedDescriptionKey: "Layout profile name is missing."
-            ])
+        if let themes {
+            // Re-encoding upgrades legacy records that predate UUIDs without
+            // changing the shape understood by current builds.
+            savedThemes = themes
+            reconcileThemeSelection(in: themes)
         }
 
-        let normalizedOffsets = KeyPositionManager.normalizedImportedOffsets(from: payload.keyOffsets)
-            .reduce(into: [UInt16: CGFloat]()) { result, pair in
-                if let keyCode = UInt16(pair.key) {
-                    result[keyCode] = pair.value
-                }
-            }
-        let normalizedWidths = normalizedImportedWidthOverrides(from: payload.keyWidthOverrides ?? [:])
-        return KeyMappingProfile(
-            name: String(trimmedName.prefix(100)),
-            keyOffsets: normalizedOffsets,
-            keyWidthOverrides: normalizedWidths
-        )
+        if let profiles {
+            // Re-encoding likewise stabilizes any legacy profile UUIDs.
+            savedKeyMappingProfiles = profiles
+            reconcileLayoutSelection(in: profiles)
+        }
+
+        defaults.set(Self.stableSelectionMigrationVersion, forKey: Keys.stableSelectionMigrationVersion)
     }
 
     private func seedDefaultExperienceIfNeeded() {
@@ -999,21 +1420,24 @@ final class SettingsManager {
         guard isFreshInstallForDefaultSeed else { return }
 
         do {
-            let seededTheme = try importThemeString(Self.defaultThemeString)
+            let seededTheme = try importThemeString(ThemeStringCodec.defaultThemeString)
             savedThemes = [seededTheme]
             currentThemeName = seededTheme.name
             glowColorHex = seededTheme.colorHex
             glowOpacity = seededTheme.opacity
+            physicalRefractionStrength = seededTheme.refractionStrength
             glowSize = seededTheme.size
             glowWidth = seededTheme.width
             glowRoundness = seededTheme.glowRoundness
             glowFullness = seededTheme.glowFullness
             fadeDuration = seededTheme.fadeDuration
             colorMode = seededTheme.colorMode
+            effectStyle = seededTheme.effectStyle
+            surfaceShapeProfile = seededTheme.shapeProfile
             gradientStartHex = seededTheme.gradientStartHex ?? Self.defaultSolidHex
             gradientEndHex = seededTheme.gradientEndHex ?? Self.defaultGradientEndHex
         } catch {
-            KeyLightLog("Failed to seed default theme: \(error)")
+            KeyLightLogger.storage.error("Default theme could not be seeded")
             return
         }
 
@@ -1023,6 +1447,20 @@ final class SettingsManager {
         }
 
         defaults.set(Self.defaultExperienceSeedVersion, forKey: Keys.defaultExperienceSeedVersion)
+    }
+
+    private func initializeOnboardingState(wasFreshInstall: Bool) {
+        guard !wasFreshInstall,
+              defaults.object(forKey: Keys.onboardingCompletedVersion) == nil,
+              defaults.object(forKey: Keys.onboardingDeferredVersion) == nil else {
+            return
+        }
+        // The new chooser must not replace an existing installation's selected
+        // effect. Setup remains manually accessible from the menu.
+        defaults.set(
+            Self.currentOnboardingVersion,
+            forKey: Keys.onboardingCompletedVersion
+        )
     }
 
     /// One-time layout migration:
@@ -1040,7 +1478,7 @@ final class SettingsManager {
             profiles.contains(where: { $0.name == activeName })
 
         let hasSavedProfiles = !profiles.isEmpty
-        let hasOffsetData = !(defaults.dictionary(forKey: KeyPositionManager.offsetsKey) ?? [:]).isEmpty
+        let hasOffsetData = !(defaults.dictionary(forKey: KeyLayoutStore.offsetsKey) ?? [:]).isEmpty
         let hasWidthData = !(defaults.dictionary(forKey: "KeyWidthOverrides") ?? [:]).isEmpty
         let hasPersistedGeometry = hasOffsetData || hasWidthData
 
@@ -1113,19 +1551,16 @@ final class SettingsManager {
         }
 
         defaults.set(Self.bundledLayoutProfilesSeedVersion, forKey: Keys.bundledLayoutProfilesSeedVersion)
-        if didChange {
-            notifyStorageChanged()
-        }
     }
 
     private func persistActiveLayoutProfile(_ profile: KeyMappingProfile) {
         savedKeyMappingProfiles = [profile]
-        currentKeyMappingProfileName = profile.name
+        persistLayoutSelection(profile)
 
         let offsets = profile.keyOffsets.reduce(into: [String: CGFloat]()) { result, pair in
             result[String(pair.key)] = pair.value
         }
-        defaults.set(offsets, forKey: KeyPositionManager.offsetsKey)
+        defaults.set(offsets, forKey: KeyLayoutStore.offsetsKey)
 
         let widths = profile.keyWidthOverrides.reduce(into: [String: CGFloat]()) { result, pair in
             result[String(pair.key)] = pair.value
@@ -1136,24 +1571,853 @@ final class SettingsManager {
     private var isFreshInstallForDefaultSeed: Bool {
         let keysToCheck = [
             Keys.isEnabled,
+            Keys.hasSeenPermissionExplanation,
             Keys.glowColorHex,
             Keys.glowOpacity,
+            Keys.physicalRefractionStrength,
             Keys.glowSize,
             Keys.glowWidth,
             Keys.glowRoundness,
             Keys.glowFullness,
             Keys.fadeDuration,
+            Keys.launchAtLogin,
             Keys.colorMode,
+            Keys.effectStyle,
+            Keys.chordSurfaceStyle,
+            Keys.chordIntensityMultiplier,
+            Keys.powerSavingMode,
+            Keys.effectConfigurationsByStyle,
+            Keys.surfaceShapeProfile,
             Keys.gradientStartHex,
             Keys.gradientEndHex,
             Keys.savedThemes,
             Keys.currentThemeName,
+            Keys.activeThemeID,
             Keys.keyMappingProfiles,
             Keys.currentKeyMappingProfileName,
-            KeyPositionManager.offsetsKey,
+            Keys.activeLayoutID,
+            Keys.overlayDisplaySelection,
+            Keys.mirroredDisplayIDs,
+            Keys.displayLayoutProfileBindings,
+            Keys.globalShortcut,
+            Keys.gradientPresets,
+            KeyLayoutStore.offsetsKey,
             "KeyWidthOverrides"
         ]
         return keysToCheck.allSatisfy { defaults.object(forKey: $0) == nil }
+    }
+
+    // MARK: - Complete Configuration Snapshots
+
+    var configurationSnapshots: [ConfigurationSnapshotDocument] {
+        loadConfigurationSnapshots()
+    }
+
+    var hasPreviousConfigurationSnapshot: Bool {
+        defaults.data(forKey: Keys.configurationSnapshotRecovery) != nil
+    }
+
+    @discardableResult
+    func saveCurrentConfigurationSnapshot(
+        named requestedName: String
+    ) throws -> ConfigurationSnapshotDocument {
+        let name = try validatedSnapshotName(requestedName)
+        var snapshots = loadConfigurationSnapshots()
+        guard !snapshots.contains(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            throw ConfigurationSnapshotError.nameConflict(name)
+        }
+
+        let document = ConfigurationSnapshotDocument(
+            name: name,
+            configuration: try currentConfigurationSnapshotPayload()
+        )
+        snapshots.append(document)
+        try persistConfigurationSnapshots(snapshots)
+        return document
+    }
+
+    @discardableResult
+    func renameConfigurationSnapshot(
+        id: UUID,
+        to requestedName: String
+    ) throws -> ConfigurationSnapshotDocument {
+        let name = try validatedSnapshotName(requestedName)
+        var snapshots = loadConfigurationSnapshots()
+        guard let index = snapshots.firstIndex(where: { $0.id == id }) else {
+            throw ConfigurationSnapshotError.snapshotNotFound
+        }
+        guard !snapshots.contains(where: {
+            $0.id != id
+                && $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            throw ConfigurationSnapshotError.nameConflict(name)
+        }
+
+        snapshots[index].name = name
+        try persistConfigurationSnapshots(snapshots)
+        return snapshots[index]
+    }
+
+    @discardableResult
+    func deleteConfigurationSnapshot(
+        id: UUID
+    ) throws -> (document: ConfigurationSnapshotDocument, index: Int) {
+        var snapshots = loadConfigurationSnapshots()
+        guard let index = snapshots.firstIndex(where: { $0.id == id }) else {
+            throw ConfigurationSnapshotError.snapshotNotFound
+        }
+        let document = snapshots.remove(at: index)
+        try persistConfigurationSnapshots(snapshots)
+        return (document, index)
+    }
+
+    func restoreDeletedConfigurationSnapshot(
+        _ document: ConfigurationSnapshotDocument,
+        at index: Int
+    ) throws {
+        var snapshots = loadConfigurationSnapshots()
+        guard !snapshots.contains(where: {
+            $0.id == document.id
+                || $0.name.caseInsensitiveCompare(document.name) == .orderedSame
+        }) else {
+            throw ConfigurationSnapshotError.nameConflict(document.name)
+        }
+        let normalized = try normalizedSnapshotDocument(document)
+        snapshots.insert(normalized, at: min(max(index, 0), snapshots.count))
+        try persistConfigurationSnapshots(snapshots)
+    }
+
+    func decodeConfigurationSnapshotDocument(
+        _ data: Data
+    ) throws -> ConfigurationSnapshotDocument {
+        guard data.count <= Self.maximumConfigurationSnapshotImportSize else {
+            throw ConfigurationSnapshotError.importTooLarge
+        }
+        guard let document = try? JSONDecoder().decode(
+            ConfigurationSnapshotDocument.self,
+            from: data
+        ) else {
+            throw ConfigurationSnapshotError.invalidDocument
+        }
+        return try normalizedSnapshotDocument(document)
+    }
+
+    func configurationSnapshotNameConflicts(
+        with document: ConfigurationSnapshotDocument
+    ) -> Bool {
+        loadConfigurationSnapshots().contains {
+            $0.name.caseInsensitiveCompare(document.name) == .orderedSame
+        }
+    }
+
+    @discardableResult
+    func importConfigurationSnapshot(
+        _ document: ConfigurationSnapshotDocument,
+        policy: ConfigurationSnapshotImportPolicy
+    ) throws -> ConfigurationSnapshotDocument {
+        var imported = try normalizedSnapshotDocument(document)
+        var snapshots = loadConfigurationSnapshots()
+        let conflictIndex = snapshots.firstIndex {
+            $0.name.caseInsensitiveCompare(imported.name) == .orderedSame
+        }
+
+        switch (conflictIndex, policy) {
+        case (.some, .rejectConflict):
+            throw ConfigurationSnapshotError.nameConflict(imported.name)
+        case (.some(let index), .replace):
+            imported.id = snapshots[index].id
+            snapshots[index] = imported
+        case (.some, .saveCopy):
+            imported.id = UUID()
+            imported.createdAt = Date()
+            imported.name = uniqueSnapshotCopyName(
+                for: imported.name,
+                in: snapshots
+            )
+            snapshots.append(imported)
+        case (.none, _):
+            if snapshots.contains(where: { $0.id == imported.id }) {
+                imported.id = UUID()
+            }
+            snapshots.append(imported)
+        }
+
+        try persistConfigurationSnapshots(snapshots)
+        return imported
+    }
+
+    func exportConfigurationSnapshotData(id: UUID) throws -> Data {
+        guard let document = loadConfigurationSnapshots().first(where: {
+            $0.id == id
+        }) else {
+            throw ConfigurationSnapshotError.snapshotNotFound
+        }
+        let data = try encodedSnapshotDocument(document, prettyPrinted: true)
+        guard data.count <= Self.maximumConfigurationSnapshotImportSize else {
+            throw ConfigurationSnapshotError.importTooLarge
+        }
+        return data
+    }
+
+    func applyConfigurationSnapshot(id: UUID) throws {
+        guard let document = loadConfigurationSnapshots().first(where: {
+            $0.id == id
+        }) else {
+            throw ConfigurationSnapshotError.snapshotNotFound
+        }
+        try applyConfigurationSnapshot(document)
+    }
+
+    func applyConfigurationSnapshot(
+        _ document: ConfigurationSnapshotDocument
+    ) throws {
+        let normalized = try normalizedSnapshotDocument(document)
+        let previous = ConfigurationSnapshotDocument(
+            name: "Previous Setup",
+            configuration: try currentConfigurationSnapshotPayload()
+        )
+        let recoveryData = try encodedSnapshotDocument(
+            previous,
+            prettyPrinted: false
+        )
+        guard recoveryData.count <= Self.maximumConfigurationSnapshotPersistentSize else {
+            throw ConfigurationSnapshotError.persistentDataTooLarge
+        }
+
+        try replaceConfiguration(with: normalized.configuration)
+        defaults.set(recoveryData, forKey: Keys.configurationSnapshotRecovery)
+    }
+
+    func restorePreviousConfigurationSnapshot() throws {
+        guard let recoveryData = defaults.data(
+            forKey: Keys.configurationSnapshotRecovery
+        ) else {
+            throw ConfigurationSnapshotError.noPreviousSetup
+        }
+        guard recoveryData.count <= Self.maximumConfigurationSnapshotPersistentSize,
+              let decoded = try? JSONDecoder().decode(
+                ConfigurationSnapshotDocument.self,
+                from: recoveryData
+              ) else {
+            throw ConfigurationSnapshotError.invalidDocument
+        }
+
+        let recovery = try normalizedSnapshotDocument(decoded)
+        let current = ConfigurationSnapshotDocument(
+            name: "Previous Setup",
+            configuration: try currentConfigurationSnapshotPayload()
+        )
+        let swappedRecoveryData = try encodedSnapshotDocument(
+            current,
+            prettyPrinted: false
+        )
+        guard swappedRecoveryData.count <= Self.maximumConfigurationSnapshotPersistentSize else {
+            throw ConfigurationSnapshotError.persistentDataTooLarge
+        }
+
+        try replaceConfiguration(with: recovery.configuration)
+        defaults.set(
+            swappedRecoveryData,
+            forKey: Keys.configurationSnapshotRecovery
+        )
+    }
+
+    private func currentConfigurationSnapshotPayload() throws
+        -> ConfigurationSnapshotPayload {
+        let liveLayout = KeyLayoutStore.normalized(KeyLayout(
+            offsets: storedLayoutValues(forKey: KeyLayoutStore.offsetsKey),
+            widthMultipliers: storedLayoutValues(
+                forKey: KeyLayoutStore.widthMultipliersKey
+            )
+        ))
+        return try normalizedSnapshotPayload(ConfigurationSnapshotPayload(
+            currentEffect: effectConfiguration,
+            effectConfigurations: loadEffectConfigurations(),
+            chordAppearance: chordAppearance,
+            powerSavingMode: powerSavingMode,
+            themes: savedThemes,
+            currentThemeName: currentThemeName,
+            activeThemeID: activeThemeID,
+            layoutProfiles: savedKeyMappingProfiles,
+            currentLayoutName: currentKeyMappingProfileName,
+            activeLayoutID: activeLayoutID,
+            currentCalibration: ConfigurationSnapshotCalibration(
+                offsets: liveLayout.offsets,
+                widthMultipliers: liveLayout.widthMultipliers
+            ),
+            primaryDisplaySelection: overlayDisplaySelection.persistedValue,
+            mirroredDisplayIDs: mirroredDisplayIDs.sorted(),
+            displayLayoutProfileBindings: displayLayoutProfileBindings,
+            globalShortcut: globalShortcut,
+            gradientPresets: savedGradientPresets
+        ))
+    }
+
+    private func replaceConfiguration(
+        with proposed: ConfigurationSnapshotPayload
+    ) throws {
+        let normalized = try normalizedSnapshotPayload(proposed)
+        let backup = captureSnapshotStorageBackup()
+
+        do {
+            writeSnapshotPayload(normalized)
+            let persisted = try currentConfigurationSnapshotPayload()
+            guard persisted == normalized,
+                  snapshotCommitVerifier(persisted) else {
+                throw ConfigurationSnapshotError.transactionFailed
+            }
+        } catch {
+            restoreSnapshotStorageBackup(backup)
+            throw ConfigurationSnapshotError.transactionFailed
+        }
+    }
+
+    private func writeSnapshotPayload(
+        _ payload: ConfigurationSnapshotPayload
+    ) {
+        savedThemes = payload.themes
+        savedKeyMappingProfiles = payload.layoutProfiles
+        savedGradientPresets = payload.gradientPresets
+        persistEffectConfigurations(payload.effectConfigurations)
+        writeCurrentEffectConfiguration(payload.currentEffect)
+        chordAppearance = payload.chordAppearance
+        powerSavingMode = payload.powerSavingMode
+
+        writeSelectionID(payload.activeThemeID, forKey: Keys.activeThemeID)
+        defaults.set(payload.currentThemeName, forKey: Keys.currentThemeName)
+        writeSelectionID(payload.activeLayoutID, forKey: Keys.activeLayoutID)
+        defaults.set(
+            payload.currentLayoutName,
+            forKey: Keys.currentKeyMappingProfileName
+        )
+
+        overlayDisplaySelection = OverlayDisplaySelection(
+            persistedValue: payload.primaryDisplaySelection
+        )
+        mirroredDisplayIDs = Set(payload.mirroredDisplayIDs)
+        displayLayoutProfileBindings = payload.displayLayoutProfileBindings
+        globalShortcut = payload.globalShortcut
+
+        defaults.set(
+            stringKeyed(payload.currentCalibration.offsets),
+            forKey: KeyLayoutStore.offsetsKey
+        )
+        defaults.set(
+            stringKeyed(payload.currentCalibration.widthMultipliers),
+            forKey: KeyLayoutStore.widthMultipliersKey
+        )
+    }
+
+    private func normalizedSnapshotDocument(
+        _ document: ConfigurationSnapshotDocument
+    ) throws -> ConfigurationSnapshotDocument {
+        guard document.kind == ConfigurationSnapshotDocument.documentKind else {
+            throw ConfigurationSnapshotError.invalidDocument
+        }
+        guard document.version == ConfigurationSnapshotDocument.currentVersion else {
+            throw ConfigurationSnapshotError.unsupportedVersion(document.version)
+        }
+        var normalized = document
+        normalized.name = try validatedSnapshotName(document.name)
+        normalized.configuration = try normalizedSnapshotPayload(
+            document.configuration
+        )
+        return normalized
+    }
+
+    private func normalizedSnapshotPayload(
+        _ payload: ConfigurationSnapshotPayload
+    ) throws -> ConfigurationSnapshotPayload {
+        let currentEffect = try normalizedSnapshotEffect(
+            payload.currentEffect,
+            for: payload.currentEffect.style
+        )
+
+        var effectProfiles = ConfigurationSnapshotPayload
+            .defaultEffectConfigurations
+        for style in EffectStyle.allCases {
+            if let proposed = payload.effectConfigurations[style.rawValue] {
+                effectProfiles[style.rawValue] = try normalizedSnapshotEffect(
+                    proposed,
+                    for: style
+                )
+            }
+        }
+        effectProfiles[currentEffect.style.rawValue] = currentEffect
+
+        let themes = try normalizedSnapshotThemes(payload.themes)
+        let layouts = try normalizedSnapshotLayouts(payload.layoutProfiles)
+        let themeIDs = Set(themes.map(\.id))
+        let layoutIDs = Set(layouts.map(\.id))
+
+        var activeThemeID = payload.activeThemeID
+        var currentThemeName = try validatedSnapshotName(
+            payload.currentThemeName
+        )
+        if activeThemeID == nil {
+            activeThemeID = themes.first(where: {
+                $0.name.caseInsensitiveCompare(currentThemeName) == .orderedSame
+            })?.id
+        }
+        if let activeThemeID {
+            guard themeIDs.contains(activeThemeID),
+                  let activeTheme = themes.first(where: {
+                      $0.id == activeThemeID
+                  }) else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The selected theme is not present in the snapshot library.")
+                )
+            }
+            currentThemeName = activeTheme.name
+        }
+
+        var activeLayoutID = payload.activeLayoutID
+        var currentLayoutName = payload.currentLayoutName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentLayoutName.isEmpty,
+              currentLayoutName.count <= PersistenceValidation.maximumNameLength else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The selected layout name is invalid.")
+            )
+        }
+        if activeLayoutID == nil {
+            activeLayoutID = layouts.first(where: {
+                $0.name.caseInsensitiveCompare(currentLayoutName) == .orderedSame
+            })?.id
+        }
+        if let activeLayoutID {
+            guard layoutIDs.contains(activeLayoutID),
+                  let activeLayout = layouts.first(where: {
+                      $0.id == activeLayoutID
+                  }) else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The selected keyboard layout is not present in the snapshot library.")
+                )
+            }
+            currentLayoutName = activeLayout.name
+        }
+
+        let liveLayout = KeyLayoutStore.normalized(KeyLayout(
+            offsets: payload.currentCalibration.offsets,
+            widthMultipliers: payload.currentCalibration.widthMultipliers
+        ))
+        let primarySelection = try validatedDisplaySelection(
+            payload.primaryDisplaySelection
+        )
+        let mirrors = try normalizedSnapshotDisplayIDs(
+            payload.mirroredDisplayIDs,
+            maximumCount: 16
+        )
+        let bindings = try normalizedSnapshotBindings(
+            payload.displayLayoutProfileBindings,
+            validLayoutIDs: layoutIDs
+        )
+        guard let shortcut = GlobalShortcut(
+            keyCode: payload.globalShortcut.keyCode,
+            modifiers: payload.globalShortcut.modifiers
+        ) else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The global shortcut is invalid.")
+            )
+        }
+        let gradients = try normalizedSnapshotGradients(
+            payload.gradientPresets
+        )
+
+        let normalized = ConfigurationSnapshotPayload(
+            currentEffect: currentEffect,
+            effectConfigurations: effectProfiles,
+            chordAppearance: payload.chordAppearance.normalized,
+            powerSavingMode: payload.powerSavingMode,
+            themes: themes,
+            currentThemeName: currentThemeName,
+            activeThemeID: activeThemeID,
+            layoutProfiles: layouts,
+            currentLayoutName: currentLayoutName,
+            activeLayoutID: activeLayoutID,
+            currentCalibration: ConfigurationSnapshotCalibration(
+                offsets: liveLayout.offsets,
+                widthMultipliers: liveLayout.widthMultipliers
+            ),
+            primaryDisplaySelection: primarySelection,
+            mirroredDisplayIDs: mirrors,
+            displayLayoutProfileBindings: bindings,
+            globalShortcut: shortcut,
+            gradientPresets: gradients
+        )
+        guard let data = try? JSONEncoder().encode(normalized),
+              data.count <= Self.maximumConfigurationSnapshotPersistentSize else {
+            throw ConfigurationSnapshotError.persistentDataTooLarge
+        }
+        return normalized
+    }
+
+    private func normalizedSnapshotEffect(
+        _ proposed: EffectConfiguration,
+        for requestedStyle: EffectStyle
+    ) throws -> EffectConfiguration {
+        let values = [
+            proposed.opacity,
+            proposed.refractionStrength,
+            proposed.height,
+            proposed.width,
+            proposed.roundness,
+            proposed.hardness,
+            proposed.fadeDuration
+        ]
+        guard values.allSatisfy(\.isFinite),
+              isValidSnapshotHex(proposed.color.solidHex),
+              isValidSnapshotHex(proposed.color.gradientStartHex),
+              isValidSnapshotHex(proposed.color.gradientEndHex) else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains invalid visual settings.")
+            )
+        }
+        return validatedEffectConfiguration(proposed, for: requestedStyle)
+    }
+
+    private func normalizedSnapshotThemes(
+        _ proposed: [Theme]
+    ) throws -> [Theme] {
+        let source = proposed.isEmpty ? [Theme.defaultTheme] : proposed
+        guard source.count <= 128 else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains too many themes.")
+            )
+        }
+        var seenIDs = Set<UUID>()
+        var seenNames = Set<String>()
+        return try source.map { theme in
+            var normalized = theme
+            normalized.name = try validatedSnapshotName(theme.name)
+            let foldedName = normalized.name.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            guard seenIDs.insert(theme.id).inserted,
+                  seenNames.insert(foldedName).inserted,
+                  isValidSnapshotHex(theme.colorHex),
+                  theme.gradientStartHex.map(isValidSnapshotHex) ?? true,
+                  theme.gradientEndHex.map(isValidSnapshotHex) ?? true else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The snapshot contains duplicate or invalid themes.")
+                )
+            }
+            let effect = try normalizedSnapshotEffect(
+                EffectConfiguration(
+                    style: theme.effectStyle,
+                    shapeProfile: theme.shapeProfile,
+                    color: ColorConfiguration(
+                        mode: theme.colorMode,
+                        solidHex: theme.colorHex,
+                        gradientStartHex: theme.gradientStartHex
+                            ?? theme.colorHex,
+                        gradientEndHex: theme.gradientEndHex
+                            ?? Self.defaultGradientEndHex
+                    ),
+                    opacity: theme.opacity,
+                    refractionStrength: theme.refractionStrength,
+                    height: theme.size,
+                    width: theme.width,
+                    roundness: theme.glowRoundness,
+                    hardness: theme.glowFullness,
+                    fadeDuration: theme.fadeDuration
+                ),
+                for: theme.effectStyle
+            )
+            normalized.colorHex = effect.color.solidHex
+            normalized.opacity = effect.opacity
+            normalized.refractionStrength = effect.refractionStrength
+            normalized.size = effect.height
+            normalized.width = effect.width
+            normalized.glowRoundness = effect.roundness
+            normalized.glowFullness = effect.hardness
+            normalized.fadeDuration = effect.fadeDuration
+            normalized.colorMode = effect.color.mode
+            normalized.effectStyle = effect.style
+            normalized.shapeProfile = effect.shapeProfile
+            if theme.gradientStartHex != nil {
+                normalized.gradientStartHex = effect.color.gradientStartHex
+            }
+            if theme.gradientEndHex != nil {
+                normalized.gradientEndHex = effect.color.gradientEndHex
+            }
+            return normalized
+        }
+    }
+
+    private func normalizedSnapshotLayouts(
+        _ proposed: [KeyMappingProfile]
+    ) throws -> [KeyMappingProfile] {
+        guard proposed.count <= 128 else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains too many keyboard layouts.")
+            )
+        }
+        var seenIDs = Set<UUID>()
+        var seenNames = Set<String>()
+        return try proposed.map { profile in
+            var normalized = profile
+            normalized.name = try validatedSnapshotName(profile.name)
+            let foldedName = normalized.name.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            guard seenIDs.insert(profile.id).inserted,
+                  seenNames.insert(foldedName).inserted else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The snapshot contains duplicate keyboard layouts.")
+                )
+            }
+            let layout = KeyLayoutStore.normalized(KeyLayout(
+                offsets: profile.keyOffsets,
+                widthMultipliers: profile.keyWidthOverrides
+            ))
+            normalized.keyOffsets = layout.offsets
+            normalized.keyWidthOverrides = layout.widthMultipliers
+            return normalized
+        }
+    }
+
+    private func normalizedSnapshotGradients(
+        _ proposed: [GradientPreset]
+    ) throws -> [GradientPreset] {
+        let source = proposed.isEmpty ? Self.defaultGradientPresets : proposed
+        guard source.count <= Self.maxGradientPresetCount else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains too many gradient presets.")
+            )
+        }
+        var seenIDs = Set<UUID>()
+        return try source.map { preset in
+            guard seenIDs.insert(preset.id).inserted,
+                  isValidSnapshotHex(preset.startHex),
+                  isValidSnapshotHex(preset.endHex) else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The snapshot contains invalid gradient presets.")
+                )
+            }
+            let name = preset.name.map {
+                String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+            }
+            return GradientPreset(
+                id: preset.id,
+                startHex: sanitizedHex(preset.startHex),
+                endHex: sanitizedHex(preset.endHex),
+                name: name?.isEmpty == false ? name : nil
+            )
+        }
+    }
+
+    private func normalizedSnapshotDisplayIDs(
+        _ proposed: [String],
+        maximumCount: Int
+    ) throws -> [String] {
+        guard proposed.count <= maximumCount else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains too many display selections.")
+            )
+        }
+        let normalized = proposed.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard normalized.allSatisfy({ !$0.isEmpty && $0.count <= 200 }) else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains an invalid display identifier.")
+            )
+        }
+        return Array(Set(normalized)).sorted()
+    }
+
+    private func normalizedSnapshotBindings(
+        _ proposed: [String: UUID],
+        validLayoutIDs: Set<UUID>
+    ) throws -> [String: UUID] {
+        guard proposed.count <= 32,
+              proposed.allSatisfy({ key, value in
+                  !key.isEmpty
+                      && key.count <= 200
+                      && validLayoutIDs.contains(value)
+              }) else {
+            throw ConfigurationSnapshotError.invalidConfiguration(
+                String(localized: "The snapshot contains invalid display layout bindings.")
+            )
+        }
+        return proposed
+    }
+
+    private func validatedDisplaySelection(_ rawValue: String) throws
+        -> String {
+        switch rawValue {
+        case "automatic", "builtIn", "main":
+            return rawValue
+        default:
+            let prefix = "display:"
+            guard rawValue.hasPrefix(prefix) else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The primary display selection is invalid.")
+                )
+            }
+            let identifier = String(rawValue.dropFirst(prefix.count))
+            guard !identifier.isEmpty, identifier.count <= 200 else {
+                throw ConfigurationSnapshotError.invalidConfiguration(
+                    String(localized: "The primary display identifier is invalid.")
+                )
+            }
+            return rawValue
+        }
+    }
+
+    private func validatedSnapshotName(_ rawValue: String) throws -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.count <= PersistenceValidation.maximumNameLength else {
+            throw ConfigurationSnapshotError.invalidName
+        }
+        return trimmed
+    }
+
+    private func isValidSnapshotHex(_ value: String) -> Bool {
+        value.count == 6
+            && value.allSatisfy { "0123456789ABCDEFabcdef".contains($0) }
+    }
+
+    private func storedLayoutValues(forKey key: String) -> [UInt16: CGFloat] {
+        guard let stored = defaults.dictionary(forKey: key) else { return [:] }
+        return stored.reduce(into: [:]) { result, pair in
+            guard let keyCode = UInt16(pair.key),
+                  let number = pair.value as? NSNumber else {
+                return
+            }
+            result[keyCode] = CGFloat(truncating: number)
+        }
+    }
+
+    private func stringKeyed(
+        _ values: [UInt16: CGFloat]
+    ) -> [String: CGFloat] {
+        values.reduce(into: [:]) { result, pair in
+            result[String(pair.key)] = pair.value
+        }
+    }
+
+    private struct SnapshotStorageBackup {
+        var values: [String: Any]
+        var absentKeys: Set<String>
+    }
+
+    private func captureSnapshotStorageBackup() -> SnapshotStorageBackup {
+        var values: [String: Any] = [:]
+        var absentKeys = Set<String>()
+        for key in Self.configurationSnapshotStorageKeyRegistry {
+            if let value = defaults.object(forKey: key) {
+                values[key] = value
+            } else {
+                absentKeys.insert(key)
+            }
+        }
+        return SnapshotStorageBackup(values: values, absentKeys: absentKeys)
+    }
+
+    private func restoreSnapshotStorageBackup(
+        _ backup: SnapshotStorageBackup
+    ) {
+        for key in Self.configurationSnapshotStorageKeyRegistry {
+            if backup.absentKeys.contains(key) {
+                defaults.removeObject(forKey: key)
+            } else {
+                defaults.set(backup.values[key], forKey: key)
+            }
+        }
+    }
+
+    private func loadConfigurationSnapshots()
+        -> [ConfigurationSnapshotDocument] {
+        guard let data = defaults.data(forKey: Keys.configurationSnapshots),
+              data.count <= Self.maximumConfigurationSnapshotPersistentSize,
+              let decoded = try? JSONDecoder().decode(
+                [ConfigurationSnapshotDocument].self,
+                from: data
+              ) else {
+            return []
+        }
+
+        var seenNames = Set<String>()
+        var seenIDs = Set<UUID>()
+        return decoded.compactMap { document in
+            guard let normalized = try? normalizedSnapshotDocument(document) else {
+                return nil
+            }
+            let name = normalized.name.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            guard seenNames.insert(name).inserted,
+                  seenIDs.insert(normalized.id).inserted else {
+                return nil
+            }
+            return normalized
+        }
+    }
+
+    private func persistConfigurationSnapshots(
+        _ snapshots: [ConfigurationSnapshotDocument]
+    ) throws {
+        let normalized = try snapshots.map(normalizedSnapshotDocument)
+        guard let data = try? JSONEncoder().encode(normalized),
+              data.count <= Self.maximumConfigurationSnapshotPersistentSize else {
+            throw ConfigurationSnapshotError.persistentDataTooLarge
+        }
+        defaults.set(data, forKey: Keys.configurationSnapshots)
+    }
+
+    private func encodedSnapshotDocument(
+        _ document: ConfigurationSnapshotDocument,
+        prettyPrinted: Bool
+    ) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = prettyPrinted
+            ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            : [.sortedKeys, .withoutEscapingSlashes]
+        do {
+            return try encoder.encode(try normalizedSnapshotDocument(document))
+        } catch let error as ConfigurationSnapshotError {
+            throw error
+        } catch {
+            throw ConfigurationSnapshotError.invalidDocument
+        }
+    }
+
+    private func uniqueSnapshotCopyName(
+        for originalName: String,
+        in snapshots: [ConfigurationSnapshotDocument]
+    ) -> String {
+        let existing = Set(snapshots.map {
+            $0.name.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+        })
+        var copyNumber = 1
+        while true {
+            let suffix = copyNumber == 1 ? " Copy" : " Copy \(copyNumber)"
+            let maximumBaseLength = max(
+                1,
+                PersistenceValidation.maximumNameLength - suffix.count
+            )
+            let candidate = String(originalName.prefix(maximumBaseLength))
+                + suffix
+            let folded = candidate.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            if !existing.contains(folded) {
+                return candidate
+            }
+            copyNumber += 1
+        }
     }
 
     #if DEBUG

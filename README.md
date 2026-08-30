@@ -14,93 +14,88 @@ Hi, KeyLight was inspired by a [YouTube video](https://www.youtube.com/watch?v=e
 
 ## Why KeyLight
 
-- Ambient typing effect for your Mac.
+- Ambient typing effects for your Mac.
 - Lightweight runtime designed to stay out of your way.
-- No noticeable battery drain in normal use on Apple Silicon (tested on M4).
-- Highly customizable effects: colors, gradients, per-key behavior, dimensions, roundness, and fade timing.
-- Built-in key position editor to calibrate glow placement to your keyboard and monitor combination.
+- Multiple styles ranging from the original glow to glass and refraction effects.
+- Highly customizable colors, gradients, dimensions, roundness, fade timing, and chord behavior.
+- Built-in guided and manual calibration for your keyboard and display combination.
 
-<img src="./docs/assets/keylight_demo.gif" alt="KeyLight Hero" width="100%">
+<img src="./docs/assets/keylight_demo.gif" alt="KeyLight demo" width="100%">
 
 ## System Requirements
 
 - macOS **14.0+** (Sonoma and higher)
-- Input Monitoring permission (required for global key listening)
+- macOS **14.0+** for Classic Glow
+- macOS **26.0+** for System Glass, Physical Refraction, and Solid Black
+- Input Monitoring permission to detect key presses globally
+- Screen Recording permission only if you choose Physical Refraction
+
+Classic Glow remains available if your Mac does not support the newer effects. Classic Glow, System Glass, and Solid Black do not need Screen Recording.
 
 ## Installing KeyLight
 
-1. Download the .dmg from the releases page.
-2. Open `KeyLight-<version>.dmg`.
-3. Drag `KeyLight.app` to `Applications`.
-4. Launch from `Applications`.
+1. Download `KeyLight-2.0.0.dmg` from the Releases page.
+2. Open the DMG.
+3. Drag `KeyLight.app` to Applications and replace the old version if macOS asks.
+4. Launch KeyLight from Applications.
 
-## First-Run Setup
+KeyLight v2.0.0 is unsigned because I am still not enrolled in the Apple Developer Program. macOS will therefore show a verification warning.
 
-KeyLight currently shows the macOS verification warning because this build is unsigned (I'm currently not enrolled in the Apple Developer Program, which is US$99/year).
+1. Try opening `KeyLight.app` once and click `Done` in the warning.
+2. Open **System Settings › Privacy & Security**.
+3. Scroll to the Security section and click **Open Anyway** for KeyLight.
+4. Confirm **Open Anyway** once more and enter your password or use Touch ID.
+5. In KeyLight's setup window, choose **Allow Input Monitoring…** and enable KeyLight.
 
-1. Launch `KeyLight.app` from `Applications`.
-2. If macOS shows `"KeyLight" Not Opened` / `Apple could not verify "KeyLight"...`:
-   - Click `Done` in that first warning popup.
-   - Open `System Settings` -> `Privacy & Security`.
-   - Scroll down to the `Security` section.
-   - Click `Open Anyway` for `KeyLight`.
-   - In the second popup (`Open "KeyLight"?`), click `Open Anyway` again.
-   - Enter your macOS password (or Touch ID) to confirm.
-3. Grant **Input Monitoring** when macOS requests it.
-4. Click **Quit & Reopen** the app when the prompt appears.
-5. Start typing.
+Because this is an unsigned update, macOS may ask for Input Monitoring again. If KeyLight is enabled but does not react, remove the old KeyLight row from Input Monitoring, add `/Applications/KeyLight.app` again, and enable it.
 
-If the prompt does not appear try typing this into the terminal to reset permissions in macOS:
-```bash
-killall KeyLight 2>/dev/null || true
-tccutil reset ListenEvent com.keylight.app
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-```
-
-More troubleshooting info:
+More troubleshooting:
 
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Features
 
 - Menubar-only app
-- Global hotkey: `Cmd + Shift + K` to toggle KeyLight
-- Color modes: Solid, Position Gradient, Random Per Key, Rainbow
-- Theme save/load with rename and delete actions
-- Layout profile system (save, load, export, import)
-- Key position editor with drag calibration and glow preview for maximum customizability
+- Customizable global shortcut, with `Cmd + Shift + K` as the default
+- Multiple held keys stay lit until each key is released
+- Natural Merge or Independent chord appearance with adjustable intensity
+- Classic Glow, System Glass, Physical Refraction, and Solid Black effects
+- Solid, Position Gradient, Random Per Key, and Rainbow color modes
+- Theme and keyboard-layout libraries with import and export
+- Guided nine-key calibration plus the original manual key editor
+- MacBook ANSI, MacBook ISO, and compact Magic Keyboard starting presets
+- Main, built-in, or selected-display routing with optional additional-display mirroring
+- Separate keyboard layouts bound to different displays
+- Named configuration snapshots with apply, import, export, and restore
+- Automatic power saving during Low Power Mode or higher thermal pressure
 - Launch at login
 
-## Community Keyboard Layouts/Presets
+## Keyboard Layouts and Presets
 
-Current checks for submissions:
-- .JSON-only parsing
-- No executable/plugin/script loading
-- Import size cap (max. 5MB)
-- Strict validation, normalization, and clamping
-- Allowed-key filtering and max entry limits
-- Numeric and string sanitation on import paths
+This repo includes calibrated MacBook Air 13" (2024) and MacBook Pro 14" (2024) layouts plus neutral MacBook ANSI, MacBook ISO, and compact Magic Keyboard starting profiles. The calibrated MacBook Air profile is selected by default.
 
-## MacBook Air 13" (2024) & Pro 14" (2024) layouts
+- See `docs/variants/` for the bundled layouts.
+- Use **Keyboard › Add Preset…** to make an editable profile from a starting point.
+- Use **Keyboard › Import** and **Export** to move layout profiles.
+- Use **Share Theme** and **Import Theme…** to move appearance settings.
 
-This repo includes a ready-to-share layout for a MacBook Air 13" (2024) bundle which is selected by default. It also supports the Macbook Pro 14" (2024) as a preset. 
+My baseline is the **German ISO** layout of the MacBook Air 13" (2024), with guidance for US keyboard (**ANSI**) layouts. Most keys should still map 1:1 for different layouts of the same MacBook variant.
 
-- check `docs/variants/` for more layouts (hopefuly to come soon)
+## Building
 
-Import flow:
-- Use `keylight-layout-profile-template.json` via **Key Layout -> Import** for layout (offsets + width) transfer.
-- Use `Copy Theme String` / `Import Theme String` in **Themes** for shareable custom glow themes.
+Open `KeyLight.xcodeproj` in Xcode 26 or newer and build the KeyLight scheme. The verified unsigned release package can be created with:
 
-My baseline is the **German ISO** layout of the Macbook Air 13" (2024), with guidance for US keyboard (**ANSI**) layouts. However, most keys should just map 1:1 for different keyboard layouts of the same variant. 
+```bash
+./scripts/build-dmg.sh --release-unsigned 2.0.0
+```
 
-## Next Steps & Known Issues
+Run `./scripts/build-dmg.sh` without arguments to see the other local, preview, and signed packaging modes.
 
-Here are some features I would still like to implement to this app in the future if I come around to it:
-- Liquid glass-like effect similar to the button presses
+## Known Issues
 
-Known issues are:
-- Media key handling is missing/wrong for the media keys corresponding to F4 (maps to F5 media key), F5 (fallback to middle), F6, F7, F9 (no keylight). This is due to difficult handling with the HID, but to be honest I have no idea why it does not work. If you have a fix please let me know.
-- Caps lock release (from ON to OFF) does not give a KeyLight effect. This is due to the handling of the effect in macOS. Right now, I force it to light up only briefly. Otherwise it would stay on as long caps lock is ON.
+- Updates are manual in this unsigned release. Download newer versions from the GitHub Releases page.
+- Some hardware and macOS combinations still report the media actions corresponding to F4–F9 inconsistently. An unrecognized action may use the center fallback or show no glow.
+- macOS exposes Caps Lock as a state change rather than a normal key-up event. KeyLight shows a short pulse so it cannot remain stuck while Caps Lock is on.
 
 ## Privacy and License
 

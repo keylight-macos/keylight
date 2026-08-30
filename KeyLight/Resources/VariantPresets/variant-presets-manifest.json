@@ -12,6 +12,24 @@
       "variantId": "macbook-pro-14-m4",
       "displayName": "MacBook Pro 14 M4",
       "resourcePath": "macbook-pro-14-m4-layout.json"
+    },
+    {
+      "id": "macbook-ansi-baseline",
+      "variantId": "macbook-ansi",
+      "displayName": "MacBook ANSI Baseline",
+      "resourcePath": "macbook-ansi-baseline-layout.json"
+    },
+    {
+      "id": "macbook-iso-baseline",
+      "variantId": "macbook-iso",
+      "displayName": "MacBook ISO Baseline",
+      "resourcePath": "macbook-iso-baseline-layout.json"
+    },
+    {
+      "id": "magic-keyboard-compact-baseline",
+      "variantId": "magic-keyboard-compact",
+      "displayName": "Magic Keyboard Compact Baseline",
+      "resourcePath": "magic-keyboard-compact-baseline-layout.json"
     }
   ]
 }

@@ -1,0 +1,1224 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "" : {
+
+    },
+    "#" : {
+
+    },
+    "%@ Setup" : {
+
+    },
+    "%@ seconds" : {
+
+    },
+    "%@ · Edited" : {
+
+    },
+    "%@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "%@s" : {
+
+    },
+    "%lld" : {
+
+    },
+    "%lld percent" : {
+
+    },
+    "%lld points" : {
+
+    },
+    "%lld%%" : {
+
+    },
+    "100% preserves the current tuned glass. Higher values increase the optical path length and color separation only at the top and side edges; the bottom stays transparent." : {
+
+    },
+    "A layout named \"%@\" already exists." : {
+
+    },
+    "A layout with that name already exists." : {
+
+    },
+    "A theme named \"%@\" already exists." : {
+
+    },
+    "About %@" : {
+
+    },
+    "Accessibility permission is not required." : {
+
+    },
+    "Actions for keyboard layout %@" : {
+
+    },
+    "Actions for theme %@" : {
+
+    },
+    "Active" : {
+
+    },
+    "Active display" : {
+
+    },
+    "Add Gradient Colors" : {
+
+    },
+    "Adjusts backdrop displacement at the top and side edges only" : {
+
+    },
+    "Allow Input Monitoring" : {
+
+    },
+    "Allow Input Monitoring so KeyLight can detect key presses." : {
+
+    },
+    "Allow Input Monitoring…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Input Monitoring…"
+          }
+        }
+      }
+    },
+    "Allow KeyLight in System Settings › General › Login Items, then try again." : {
+
+    },
+    "Allow Screen Recording" : {
+
+    },
+    "Allow Screen Recording…" : {
+
+    },
+    "An opaque black silhouette that retracts geometrically." : {
+
+    },
+    "Appearance" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appearance"
+          }
+        }
+      }
+    },
+    "Applied \"%@\"." : {
+
+    },
+    "Automatically check for updates" : {
+
+    },
+    "Available with Classic Glow and Classic+" : {
+
+    },
+    "Backdrop refraction with System Glass fallback." : {
+
+    },
+    "Bundled preset file not found: %@." : {
+
+    },
+    "Bundled presets are unavailable in this build." : {
+
+    },
+    "Calibrate Keyboard…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calibrate Keyboard…"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+
+    },
+    "Capture-free comparison: Apple controls the clear-glass optics. KeyLight supplies only the key shape, grouping, and motion." : {
+
+    },
+    "Capture-free optics controlled by macOS." : {
+
+    },
+    "Capture-free optics controlled entirely by Apple's compositor." : {
+
+    },
+    "Check Again" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Again"
+          }
+        }
+      }
+    },
+    "Check Failed" : {
+
+    },
+    "Check for Updates…" : {
+
+    },
+    "Checking Input Monitoring" : {
+
+    },
+    "Checking…" : {
+
+    },
+    "Checks Input Monitoring and restarts key detection" : {
+
+    },
+    "Choose Undo within ten seconds to restore it." : {
+
+    },
+    "Choose Your Effect" : {
+
+    },
+    "Choose a unique name up to 100 characters." : {
+
+    },
+    "Classic Glow" : {
+
+    },
+    "Classic Glow fallback is active on this macOS version." : {
+
+    },
+    "Classic color and softness with fluid concurrent-key morphing." : {
+
+    },
+    "Classic color with fluid concurrent-key motion." : {
+
+    },
+    "Classic+" : {
+
+    },
+    "Click a key to select, then drag to adjust its glow position. Use the slider to adjust glow width." : {
+
+    },
+    "Color" : {
+
+    },
+    "Color Mode" : {
+
+    },
+    "Color mode" : {
+
+    },
+    "Color settings are unavailable for this effect" : {
+
+    },
+    "Colors are distributed left-to-right by key position." : {
+
+    },
+    "Command Shift K: %@" : {
+
+    },
+    "Command-Shift-K could not be registered. KeyLight can still be enabled from the menu." : {
+
+    },
+    "Compact" : {
+
+    },
+    "Contacts only the signed KeyLight update feed" : {
+
+    },
+    "Continue" : {
+
+    },
+    "Continue with Fallback" : {
+
+    },
+    "Controls glow boundary feather (0% soft, 100% crisp)." : {
+
+    },
+    "Controls the corner profile of Classic Glow and Classic+" : {
+
+    },
+    "Controls the visibility of Apple's system glass; the system controls its lensing and refraction." : {
+
+    },
+    "Controls the visibility of the optical contour. The body remains clear." : {
+
+    },
+    "Copy" : {
+
+    },
+    "Copy this KeyLight theme string to share the current appearance." : {
+
+    },
+    "Current Wave" : {
+
+    },
+    "Custom neutral and prismatic glass optics." : {
+
+    },
+    "Default" : {
+
+    },
+    "Delete" : {
+
+    },
+    "Delete Layout \"%@\"?" : {
+
+    },
+    "Delete Selected" : {
+
+    },
+    "Delete Theme \"%@\"?" : {
+
+    },
+    "Deleted layout \"%@\"." : {
+
+    },
+    "Deleted theme \"%@\"." : {
+
+    },
+    "Deletion Undone" : {
+
+    },
+    "Diagnostics Export Failed" : {
+
+    },
+    "Diagnostics Exported" : {
+
+    },
+    "Disable %@" : {
+
+    },
+    "Dismiss %@" : {
+
+    },
+    "Display %u" : {
+
+    },
+    "Done" : {
+
+    },
+    "Drag keys horizontally to align the glow effect with your physical keyboard" : {
+
+    },
+    "Each key uses a deterministic random color derived from its key code." : {
+
+    },
+    "Effect" : {
+
+    },
+    "Effect Runtime" : {
+
+    },
+    "Effect Style" : {
+
+    },
+    "Enable %@" : {
+
+    },
+    "Enable KeyLight to start key detection." : {
+
+    },
+    "End" : {
+
+    },
+    "Erase All Local KeyLight Settings?" : {
+
+    },
+    "Erase Local Settings…" : {
+
+    },
+    "Erase and Return to Setup" : {
+
+    },
+    "Erasing settings does not revoke macOS permissions. Input Monitoring and Screen Recording must be revoked separately in System Settings." : {
+
+    },
+    "Explains how to install KeyLight before allowing Input Monitoring" : {
+
+    },
+    "Explains the exact installation correction before Input Monitoring is requested" : {
+
+    },
+    "Explains why KeyLight needs Input Monitoring before requesting access" : {
+
+    },
+    "Export Current…" : {
+
+    },
+    "Export Redacted Diagnostics…" : {
+
+    },
+    "Fade Duration" : {
+
+    },
+    "Fade duration" : {
+
+    },
+    "Fallback" : {
+
+    },
+    "Finish in System Settings" : {
+
+    },
+    "General" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "General"
+          }
+        }
+      }
+    },
+    "Geometry" : {
+
+    },
+    "Global Shortcut" : {
+
+    },
+    "Glow Color" : {
+
+    },
+    "Glow Width:" : {
+
+    },
+    "Glow color" : {
+
+    },
+    "Glow width for %@" : {
+
+    },
+    "Gradient Colors" : {
+
+    },
+    "Gradient End" : {
+
+    },
+    "Gradient Start" : {
+
+    },
+    "Gradient end color" : {
+
+    },
+    "Gradient start color" : {
+
+    },
+    "Grant Access" : {
+
+    },
+    "Hardness" : {
+
+    },
+    "Height" : {
+
+    },
+    "Hex" : {
+
+    },
+    "Hex %@" : {
+
+    },
+    "ISO <> is between left Shift and Z/Y." : {
+
+    },
+    "Idle" : {
+
+    },
+    "If this app is already listed but access remains unavailable, remove its stale row, add the installed app again, turn it on, and retry the monitor." : {
+
+    },
+    "Import Theme" : {
+
+    },
+    "Import and Apply" : {
+
+    },
+    "Import…" : {
+
+    },
+    "Input Monitoring" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input Monitoring"
+          }
+        }
+      }
+    },
+    "Input Monitoring Active" : {
+
+    },
+    "Input Monitoring Allowed" : {
+
+    },
+    "Input Monitoring Authorized" : {
+
+    },
+    "Input Monitoring Needs Attention" : {
+
+    },
+    "Input Monitoring Required" : {
+
+    },
+    "Input Monitoring Starting" : {
+
+    },
+    "Input Monitoring Unavailable" : {
+
+    },
+    "Input Monitoring is allowed, but the keyboard event loop could not start. Retry it or review the installed KeyLight entry in System Settings." : {
+
+    },
+    "Input Monitoring is granted and key presses are being monitored." : {
+
+    },
+    "Input Monitoring is granted, but KeyLight could not start the keyboard monitor." : {
+
+    },
+    "Input Monitoring is granted. Enable KeyLight to start the keyboard monitor." : {
+
+    },
+    "Input Monitoring needs attention" : {
+
+    },
+    "Input Monitoring needs attention before KeyLight can detect keys reliably." : {
+
+    },
+    "Input Monitoring status: %@" : {
+
+    },
+    "Input Monitoring verification succeeded. Choose an effect." : {
+
+    },
+    "Input Monitoring: %@" : {
+
+    },
+    "Invalid theme string." : {
+
+    },
+    "Keeps Classic Glow as the safe default and does not reopen this setup automatically" : {
+
+    },
+    "Key Detected" : {
+
+    },
+    "Key Layout (Position + Width)" : {
+
+    },
+    "Key layout profiles store keyboard geometry only: per-key offsets and per-key glow width overrides." : {
+
+    },
+    "KeyLight Is Ready" : {
+
+    },
+    "KeyLight could not disable launch at login. The previous setting was restored." : {
+
+    },
+    "KeyLight could not enable launch at login. The previous setting was restored." : {
+
+    },
+    "KeyLight could not encode the current layout." : {
+
+    },
+    "KeyLight could not encode the current theme." : {
+
+    },
+    "KeyLight is checking macOS permission and keyboard monitor status." : {
+
+    },
+    "KeyLight is ready to detect key presses." : {
+
+    },
+    "KeyLight is ready. Choose Done to close setup." : {
+
+    },
+    "KeyLight is starting the keyboard monitor." : {
+
+    },
+    "KeyLight needs Input Monitoring to detect key presses." : {
+
+    },
+    "KeyLight needs Input Monitoring to receive global key press and release events and position the effect under the corresponding physical key." : {
+
+    },
+    "KeyLight stores appearance themes, keyboard layouts, onboarding state, and update preferences locally. It stores no typing history or captured imagery." : {
+
+    },
+    "KeyLight turns physical key presses into a fluid light surface along the bottom of your display." : {
+
+    },
+    "KeyLight's neutral and prismatic custom glass treatment." : {
+
+    },
+    "Keyboard" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyboard"
+          }
+        }
+      }
+    },
+    "Keyboard Calibration" : {
+
+    },
+    "Keyboard Shortcut Unavailable" : {
+
+    },
+    "Keyboard layout %@" : {
+
+    },
+    "Launch at Login" : {
+
+    },
+    "Launch at Login Failed" : {
+
+    },
+    "Launch at Login Needs Approval" : {
+
+    },
+    "Launch at Login Wasn’t Changed" : {
+
+    },
+    "Layout Couldn’t Be Exported" : {
+
+    },
+    "Layout Couldn’t Be Saved" : {
+
+    },
+    "Layout Export Failed" : {
+
+    },
+    "Layout Exported" : {
+
+    },
+    "Layout Import Failed" : {
+
+    },
+    "Layout Imported" : {
+
+    },
+    "Layout Renamed" : {
+
+    },
+    "Layout Saved" : {
+
+    },
+    "Layout Updated" : {
+
+    },
+    "Layout profile actions" : {
+
+    },
+    "Layout profile contains too many key entries (max 512)." : {
+
+    },
+    "Layout profile file is too large (max 1MB)." : {
+
+    },
+    "Layout profile name" : {
+
+    },
+    "Layout profile name already exists." : {
+
+    },
+    "Layout profile name is missing." : {
+
+    },
+    "Liquid Glass" : {
+
+    },
+    "Liquid Glass uses the untinted adaptive system material. Color settings remain saved for Classic Glow and Classic+." : {
+
+    },
+    "Local Data" : {
+
+    },
+    "Lower values clear the body while preserving native lensing and strengthening chromatic top and side refraction." : {
+
+    },
+    "Maximum sampled strip" : {
+
+    },
+    "Modified" : {
+
+    },
+    "Motion" : {
+
+    },
+    "Move left for a compact wave or right for a wider, softer wave" : {
+
+    },
+    "Name cannot be empty." : {
+
+    },
+    "Needs attention" : {
+
+    },
+    "No Screen Capture" : {
+
+    },
+    "No saved themes yet." : {
+
+    },
+    "No typing history, analytics, accounts, or cloud sync" : {
+
+    },
+    "Not Now" : {
+
+    },
+    "Not selected" : {
+
+    },
+    "Off by default. When enabled, KeyLight contacts only its signed HTTPS update feed and sends no system profile or analytics." : {
+
+    },
+    "Offset: %@" : {
+
+    },
+    "Only a 180–200 point strip at the bottom of the selected display is sampled. Frames stay in GPU-backed memory and are never saved." : {
+
+    },
+    "Opacity" : {
+
+    },
+    "Opaque silhouette with geometric retraction." : {
+
+    },
+    "Open Applications" : {
+
+    },
+    "Open Input Monitoring Settings" : {
+
+    },
+    "Open Screen Recording Settings" : {
+
+    },
+    "Open Settings" : {
+
+    },
+    "Open System Settings" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open System Settings"
+          }
+        }
+      }
+    },
+    "Opens the Input Monitoring privacy settings" : {
+
+    },
+    "Optics" : {
+
+    },
+    "Optional Screen Recording" : {
+
+    },
+    "Ordinary key events are reduced to identity and press/release metadata" : {
+
+    },
+    "Original single-target glow with unchanged timing." : {
+
+    },
+    "Paste a KeyLight theme string. A valid theme is saved and applied immediately." : {
+
+    },
+    "Permission is allowed, but KeyLight could not start key detection." : {
+
+    },
+    "Permission required" : {
+
+    },
+    "Physical Refraction" : {
+
+    },
+    "Physical Refraction samples the screen beneath the lens instead of applying a synthetic color. Color settings remain saved for Classic Glow and Classic+." : {
+
+    },
+    "Physical Refraction starts capture only when a visible key surface first appears. It samples one bottom strip at up to 30 fps, retains one latest GPU-backed frame, and stops two seconds after the final retraction." : {
+
+    },
+    "Physical capture" : {
+
+    },
+    "Physical capture is idle until a key surface appears, retains one latest IOSurface-backed frame, and stops after the two-second post-retraction grace period." : {
+
+    },
+    "Physically modeled backdrop refraction with System Glass fallback." : {
+
+    },
+    "Position Gradient" : {
+
+    },
+    "Presets" : {
+
+    },
+    "Press and release any physical key once." : {
+
+    },
+    "Press to preview. Use Left and Right Arrow to adjust position; hold Shift for larger steps." : {
+
+    },
+    "Privacy" : {
+
+    },
+    "Privacy & Permissions" : {
+
+    },
+    "Quit %@" : {
+
+    },
+    "Quit this copy, install it in Applications using the exact filename shown above, then launch that app. In Input Monitoring, remove any stale row, add the installed app again, turn it on, and retry in the relaunched app." : {
+
+    },
+    "Rainbow" : {
+
+    },
+    "Random Per Key" : {
+
+    },
+    "Ready" : {
+
+    },
+    "Redo (Cmd+Shift+Z)" : {
+
+    },
+    "Redo keyboard calibration" : {
+
+    },
+    "Refraction Strength" : {
+
+    },
+    "Refraction strength" : {
+
+    },
+    "Releases" : {
+
+    },
+    "Renamed \"%@\" to \"%@\"." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Renamed \"%1$@\" to \"%2$@\"."
+          }
+        }
+      }
+    },
+    "Rename…" : {
+
+    },
+    "Renderer" : {
+
+    },
+    "Replaces the selected layout with the current calibration" : {
+
+    },
+    "Replaces the selected theme with the current appearance" : {
+
+    },
+    "Requests Input Monitoring access for KeyLight" : {
+
+    },
+    "Requests Input Monitoring permission for KeyLight" : {
+
+    },
+    "Reset All" : {
+
+    },
+    "Reset This Key" : {
+
+    },
+    "Reset all key positions to defaults?" : {
+
+    },
+    "Resolve Installation…" : {
+
+    },
+    "Resolved" : {
+
+    },
+    "Restores the selected layout's saved calibration" : {
+
+    },
+    "Restores the selected theme's saved appearance" : {
+
+    },
+    "Restores this key's position and glow width" : {
+
+    },
+    "Retries the KeyLight keyboard monitor" : {
+
+    },
+    "Retry" : {
+
+    },
+    "Retry Monitor" : {
+
+    },
+    "Revert" : {
+
+    },
+    "Review" : {
+
+    },
+    "Review Access…" : {
+
+    },
+    "Review Installation…" : {
+
+    },
+    "Round" : {
+
+    },
+    "Roundness" : {
+
+    },
+    "Running app" : {
+
+    },
+    "Save" : {
+
+    },
+    "Save As…" : {
+
+    },
+    "Saved \"%@\"." : {
+
+    },
+    "Saved Classic Settings" : {
+
+    },
+    "Saved Item Deleted" : {
+
+    },
+    "Saved the current appearance to \"%@\"." : {
+
+    },
+    "Saved the current calibration to \"%@\"." : {
+
+    },
+    "Saved the current layout as \"%@\"." : {
+
+    },
+    "Screen Recording Allowed" : {
+
+    },
+    "Screen Recording Not Allowed" : {
+
+    },
+    "Screen Recording allowed" : {
+
+    },
+    "Screen Recording is allowed" : {
+
+    },
+    "Screen Recording is not yet allowed" : {
+
+    },
+    "Screen Recording is optional and used only by Physical Refraction" : {
+
+    },
+    "Screen Recording permission required" : {
+
+    },
+    "Selected" : {
+
+    },
+    "Selected key is modified" : {
+
+    },
+    "Selected key uses defaults" : {
+
+    },
+    "Selected, edited" : {
+
+    },
+    "Selected: %@" : {
+
+    },
+    "Selecting the effect never requests permission. The button below is the explicit consent action. System Glass is the capture-free alternative." : {
+
+    },
+    "Selects this capture-free effect and updates the live preview." : {
+
+    },
+    "Sets the tempo for reveal, key-to-key flow, and fade-out." : {
+
+    },
+    "Sets the tempo for reveal, key-to-key flow, and geometric retraction." : {
+
+    },
+    "Settings…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings…"
+          }
+        }
+      }
+    },
+    "Setup Complete" : {
+
+    },
+    "Setup is complete. Your selected effect and update choice are saved." : {
+
+    },
+    "Share Theme" : {
+
+    },
+    "Shareable theme string" : {
+
+    },
+    "Share…" : {
+
+    },
+    "Sharp" : {
+
+    },
+    "Smoothness" : {
+
+    },
+    "Software Updates" : {
+
+    },
+    "Solid" : {
+
+    },
+    "Solid Black" : {
+
+    },
+    "Solid Black is always fully opaque inside the active silhouette." : {
+
+    },
+    "Solid Black uses an opaque black fill with no tint, outline, glass, or shadow. Color settings remain saved for Classic Glow and Classic+." : {
+
+    },
+    "Start" : {
+
+    },
+    "Starting" : {
+
+    },
+    "Starts KeyLight automatically after you sign in" : {
+
+    },
+    "Stopping" : {
+
+    },
+    "Stopping soon" : {
+
+    },
+    "System Glass" : {
+
+    },
+    "System Glass uses only Apple's untinted compositor material—without KeyLight's backing, painted optical edge, or Metal refraction. Color settings remain saved for Classic Glow and Classic+." : {
+
+    },
+    "Technical Details" : {
+
+    },
+    "The completion screen stays open until you choose Done; setup never dismisses itself automatically." : {
+
+    },
+    "The file is not a valid KeyLight layout profile." : {
+
+    },
+    "The file is too large (maximum 1 MB)." : {
+
+    },
+    "The left side strongly compresses the wave; the right side spreads and softens it." : {
+
+    },
+    "The original single-target KeyLight glow with unchanged pixels and timing." : {
+
+    },
+    "The redacted report contains no key codes, characters, or captured pixels." : {
+
+    },
+    "The saved item was restored." : {
+
+    },
+    "The system pasteboard did not accept the theme string." : {
+
+    },
+    "Theme %@" : {
+
+    },
+    "Theme Couldn’t Be Copied" : {
+
+    },
+    "Theme Couldn’t Be Saved" : {
+
+    },
+    "Theme Couldn’t Be Shared" : {
+
+    },
+    "Theme Import Failed" : {
+
+    },
+    "Theme Imported" : {
+
+    },
+    "Theme Renamed" : {
+
+    },
+    "Theme Saved" : {
+
+    },
+    "Theme String Copied" : {
+
+    },
+    "Theme Updated" : {
+
+    },
+    "Theme actions" : {
+
+    },
+    "Theme name" : {
+
+    },
+    "Theme name already exists." : {
+
+    },
+    "Theme string is too large." : {
+
+    },
+    "Theme string to import" : {
+
+    },
+    "Themes" : {
+
+    },
+    "Themes store glow style settings only (color, effect, and fade)." : {
+
+    },
+    "These values stay unchanged and return when Classic Glow or Classic+ is selected." : {
+
+    },
+    "This disables KeyLight and Launch at Login, stops monitoring and capture, clears themes, layouts, preferences, onboarding state, and updater state, then returns to setup. macOS privacy permissions are not revoked." : {
+
+    },
+    "This local preview has no production update feed or public signing key, so it cannot make update requests." : {
+
+    },
+    "This permission is optional and used only by Physical Refraction. Selecting or previewing that effect never requests access." : {
+
+    },
+    "This removes the saved item. You can undo for ten seconds." : {
+
+    },
+    "Troubleshooting" : {
+
+    },
+    "Turn on KeyLight in Privacy & Security › Input Monitoring, then return here. KeyLight checks permission without showing another prompt." : {
+
+    },
+    "Typed characters are not retained, logged, exported, or sent anywhere." : {
+
+    },
+    "Unavailable in This Build" : {
+
+    },
+    "Unavailable on this macOS version; Classic Glow remains the fallback." : {
+
+    },
+    "Undo (%llds)" : {
+
+    },
+    "Undo (Cmd+Z)" : {
+
+    },
+    "Undo keyboard calibration" : {
+
+    },
+    "Unsupported layout profile version (%lld). Please update KeyLight." : {
+
+    },
+    "Until access is allowed, the selected effect safely renders with capture-free System Glass. KeyLight never requests this permission automatically." : {
+
+    },
+    "Up to Date" : {
+
+    },
+    "Update Layout" : {
+
+    },
+    "Update Theme" : {
+
+    },
+    "Updates" : {
+
+    },
+    "Use System Glass Instead" : {
+
+    },
+    "Use color %@" : {
+
+    },
+    "Use gradient from %@ to %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Use gradient from %1$@ to %2$@"
+          }
+        }
+      }
+    },
+    "Uses Optional Screen Recording" : {
+
+    },
+    "Uses optional Screen Recording only while a physical surface is active; System Glass is the capture-free fallback." : {
+
+    },
+    "Verify Installation" : {
+
+    },
+    "Verify a Physical Key" : {
+
+    },
+    "Version" : {
+
+    },
+    "Version %@ Available" : {
+
+    },
+    "Welcome to KeyLight" : {
+
+    },
+    "Wide + Soft" : {
+
+    },
+    "Width" : {
+
+    },
+    "macOS 26+" : {
+
+    },
+    "macOS kept the previous launch-at-login setting." : {
+
+    },
+    "macOS reported a different launch-at-login state, so KeyLight restored the current system value." : {
+
+    },
+    "⌘⇧K" : {
+
+    }
+  },
+  "version" : "1.0"
+}

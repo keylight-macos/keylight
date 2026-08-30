@@ -1,0 +1,14 @@
+// KeyLight's single checked-in source of truth for compatibility and toolchain settings.
+MACOSX_DEPLOYMENT_TARGET = 14.0
+MARKETING_VERSION = 2.0.0
+CURRENT_PROJECT_VERSION = 26
+KEYLIGHT_BUILD_CHANNEL = Development
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_EMIT_LOC_STRINGS = YES
+LOCALIZATION_PREFERS_STRING_CATALOGS = YES
+
+// Production release automation must provide both values. Keeping them empty
+// makes local/debug builds network-silent and UpdateService fails closed.
+KEYLIGHT_SPARKLE_FEED_URL =
+KEYLIGHT_SPARKLE_PUBLIC_ED_KEY =

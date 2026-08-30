@@ -1,41 +1,99 @@
 import SwiftUI
 import AppKit
 
-/// Window that displays the key position editor
 @MainActor
-final class KeyPositionEditorWindow: NSWindow {
-    init() {
-        let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let windowWidth: CGFloat = min(screenFrame.width * 0.9, 1200)
-        let windowHeight: CGFloat = 460
+final class KeyEditorGlowPreviewSession {
+    typealias ShowHandler = @MainActor (UInt16, CGFloat, CGFloat) -> Void
+    typealias HideHandler = @MainActor () -> Void
 
-        let contentRect = NSRect(
-            x: (screenFrame.width - windowWidth) / 2,
-            y: (screenFrame.height - windowHeight) / 2,
-            width: windowWidth,
-            height: windowHeight
+    private var hideTask: Task<Void, Never>?
+    private let showHandler: ShowHandler
+    private let hideHandler: HideHandler
+
+    init(
+        show: @escaping ShowHandler,
+        hide: @escaping HideHandler
+    ) {
+        showHandler = show
+        hideHandler = hide
+    }
+
+    func show(keyCode: UInt16, position: CGFloat, keyWidth: CGFloat) {
+        hideTask?.cancel()
+        hideTask = nil
+        showHandler(keyCode, position, keyWidth)
+    }
+
+    func scheduleHide(after delay: TimeInterval) {
+        hideTask?.cancel()
+        hideTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.hideTask = nil
+            self?.hideHandler()
+        }
+    }
+
+    func stop() {
+        hideTask?.cancel()
+        hideTask = nil
+        hideHandler()
+    }
+}
+
+/// SwiftUI scene root used by the native singleton calibration window.
+/// The preview session is scene-owned so delayed hides cannot outlive the window.
+@MainActor
+struct KeyPositionEditorSceneRoot: View {
+    let model: KeyLightModel
+
+    @State private var previewSession: KeyEditorGlowPreviewSession
+    @ObservedObject private var layoutStore: KeyLayoutStore
+
+    init(model: KeyLightModel, layoutStore: KeyLayoutStore) {
+        self.model = model
+        _layoutStore = ObservedObject(wrappedValue: layoutStore)
+        _previewSession = State(initialValue: KeyEditorGlowPreviewSession(
+            show: { [weak model] keyCode, position, keyWidth in
+                model?.setPreview(
+                    .preview(
+                        .keyEditor,
+                        colorReferenceKeyCode: keyCode,
+                        horizontalPosition: Double(position),
+                        keyWidth: Double(keyWidth)
+                    ),
+                    source: .keyEditor
+                )
+            },
+            hide: { [weak model] in
+                model?.clearPreview(.keyEditor)
+            }
+        ))
+    }
+
+    var body: some View {
+        KeyPositionEditorView(
+            model: model,
+            previewSession: previewSession,
+            layoutStore: layoutStore
         )
-
-        super.init(
-            contentRect: contentRect,
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-
-        title = "Adjust Key Positions"
-        isReleasedWhenClosed = false
-        minSize = NSSize(width: 800, height: 380)
-
-        let hostingView = NSHostingView(rootView: KeyPositionEditorView())
-        contentView = hostingView
+            .onDisappear {
+                layoutStore.endGestureTransaction()
+                previewSession.stop()
+            }
     }
 }
 
 /// Main view for adjusting key positions by dragging
 struct KeyPositionEditorView: View {
-    @ObservedObject private var positionManager = KeyPositionManager.shared
-    @ObservedObject private var keyWidthManager = KeyWidthManager.shared
+    let model: KeyLightModel
+    let previewSession: KeyEditorGlowPreviewSession
+
+    @ObservedObject var layoutStore: KeyLayoutStore
 
     @State private var selectedKey: UInt16? = nil
     @State private var showResetConfirmation = false
@@ -49,32 +107,32 @@ struct KeyPositionEditorView: View {
                     .foregroundColor(.secondary)
                 Spacer()
 
-                Button(action: { positionManager.undo() }) {
+                Button(action: { layoutStore.undo() }) {
                     Image(systemName: "arrow.uturn.backward")
                 }
-                .disabled(!positionManager.canUndo)
+                .disabled(!layoutStore.canUndo)
                 .help("Undo (Cmd+Z)")
                 .keyboardShortcut("z", modifiers: .command)
+                .accessibilityLabel("Undo keyboard calibration")
 
-                Button(action: { positionManager.redo() }) {
+                Button(action: { layoutStore.redo() }) {
                     Image(systemName: "arrow.uturn.forward")
                 }
-                .disabled(!positionManager.canRedo)
+                .disabled(!layoutStore.canRedo)
                 .help("Redo (Cmd+Shift+Z)")
                 .keyboardShortcut("z", modifiers: [.command, .shift])
+                .accessibilityLabel("Redo keyboard calibration")
 
                 Button("Reset All") {
                     showResetConfirmation = true
                 }
-                .focusable(false)
                 .confirmationDialog(
                     "Reset all key positions to defaults?",
                     isPresented: $showResetConfirmation,
                     titleVisibility: .visible
                 ) {
                     Button("Reset All", role: .destructive) {
-                        positionManager.resetAllKeys()
-                        keyWidthManager.resetAllKeys()
+                        layoutStore.resetAll()
                     }
                     Button("Cancel", role: .cancel) {}
                 }
@@ -131,6 +189,8 @@ struct KeyPositionEditorView: View {
                             containerWidth: geometry.size.width,
                             selectedKey: $selectedKey,
                             pressedKeys: pressedKeys,
+                            previewSession: previewSession,
+                            layoutStore: layoutStore,
                             showArrowSubRow: row == KeyboardLayoutInfo.maxRow
                         )
                     }
@@ -145,7 +205,9 @@ struct KeyPositionEditorView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let keyCode = selectedKey,
                    let keyInfo = KeyboardLayoutInfo.allKeys.first(where: { $0.id == keyCode }) {
-                    let effectiveOffset = positionManager.effectiveOffset(for: keyCode)
+                    let effectiveOffset = layoutStore.effectiveOffset(for: keyCode)
+                    let isModified = effectiveOffset != 0 ||
+                        layoutStore.effectiveWidthMultiplier(for: keyCode) != 1
                     HStack {
                         Text("Selected: \(keyInfo.label)")
                             .font(.subheadline)
@@ -153,13 +215,21 @@ struct KeyPositionEditorView: View {
                         Text("Offset: \(String(format: "%.1f%%", effectiveOffset * 100))")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
+                        Label(
+                            isModified ? "Modified" : "Default",
+                            systemImage: isModified ? "pencil.circle.fill" : "checkmark.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(isModified ? Color.orange : Color.secondary)
+                        .accessibilityLabel(isModified ? "Selected key is modified" : "Selected key uses defaults")
                         Spacer()
                         Button("Reset This Key") {
-                            positionManager.resetKey(keyCode)
-                            keyWidthManager.resetKey(keyCode)
+                            layoutStore.resetKey(keyCode)
+                            postWidthPreview(for: keyCode)
+                            scheduleHidePreview()
                         }
                         .buttonStyle(.link)
-                        .focusable(false)
+                        .accessibilityHint("Restores this key's position and glow width")
                     }
 
                     HStack(spacing: 8) {
@@ -167,23 +237,27 @@ struct KeyPositionEditorView: View {
                             .font(.caption)
                         Slider(
                             value: Binding(
-                                get: { keyWidthManager.effectiveWidthMultiplier(for: keyCode) },
+                                get: { layoutStore.effectiveWidthMultiplier(for: keyCode) },
                                 set: { newValue in
-                                    keyWidthManager.setWidthMultiplier(newValue, for: keyCode)
+                                    layoutStore.setWidthMultiplier(newValue, for: keyCode)
                                     postWidthPreview(for: keyCode)
                                 }
                             ),
                             in: 0.3...3.0,
                             onEditingChanged: { isEditing in
                                 if isEditing {
+                                    layoutStore.beginGestureTransaction()
                                     postWidthPreview(for: keyCode)
                                 } else {
+                                    layoutStore.endGestureTransaction()
                                     scheduleHidePreview()
                                 }
                             }
                         )
                         .frame(width: 200)
-                        Text("\(Int(keyWidthManager.effectiveWidthMultiplier(for: keyCode) * 100))%")
+                        .accessibilityLabel("Glow width for \(keyInfo.label)")
+                        .accessibilityValue("\(Int(layoutStore.effectiveWidthMultiplier(for: keyCode) * 100)) percent")
+                        Text("\(Int(layoutStore.effectiveWidthMultiplier(for: keyCode) * 100))%")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .monospacedDigit()
@@ -198,14 +272,13 @@ struct KeyPositionEditorView: View {
             .padding()
             .background(Color(NSColor.windowBackgroundColor))
         }
-        .onReceive(NotificationCenter.default.publisher(for: .physicalKeyDown)) { notification in
-            handlePhysicalKeyDown(notification)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .physicalKeyUp)) { notification in
-            handlePhysicalKeyUp(notification)
+        .onChange(of: model.physicalKeyActivity) { _, activity in
+            handlePhysicalKeyActivity(activity)
         }
         .onDisappear {
+            layoutStore.endGestureTransaction()
             pressedKeys.removeAll()
+            previewSession.stop()
         }
     }
 
@@ -213,8 +286,8 @@ struct KeyPositionEditorView: View {
         guard let keyInfo = KeyboardLayoutInfo.allKeys.first(where: { $0.id == keyCode }) else {
             return
         }
-        let position = positionManager.adjustedPosition(for: keyCode, originalPosition: keyInfo.position)
-        let keyWidth = keyWidthManager.effectiveWidth(for: keyCode, defaultWidth: keyInfo.width)
+        let position = layoutStore.adjustedPosition(for: keyCode, originalPosition: keyInfo.position)
+        let keyWidth = layoutStore.effectiveWidth(for: keyCode, defaultWidth: keyInfo.width)
         postPreview(keyCode: keyCode, position: position, keyWidth: keyWidth)
     }
 
@@ -223,48 +296,27 @@ struct KeyPositionEditorView: View {
     }
 
     private func postPreview(keyCode: UInt16, position: CGFloat, keyWidth: CGFloat) {
-        NotificationCenter.default.post(
-            name: .showGlowPreview,
-            object: nil,
-            userInfo: [
-                "keyCode": keyCode,
-                "position": position,
-                "keyWidth": keyWidth
-            ]
-        )
+        previewSession.show(keyCode: keyCode, position: position, keyWidth: keyWidth)
     }
 
     private func postHidePreview(after delay: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            NotificationCenter.default.post(name: .hideGlowPreview, object: nil)
+        previewSession.scheduleHide(after: delay)
+    }
+
+    private func handlePhysicalKeyActivity(_ activity: PhysicalKeyActivity?) {
+        guard let activity else {
+            pressedKeys.removeAll()
+            return
         }
-    }
-
-    private func handlePhysicalKeyDown(_ notification: Notification) {
-        guard let keyCode = physicalKeyCode(from: notification) else { return }
-        pressedKeys.insert(keyCode)
-    }
-
-    private func handlePhysicalKeyUp(_ notification: Notification) {
-        guard let keyCode = physicalKeyCode(from: notification) else { return }
-        pressedKeys.remove(keyCode)
-    }
-
-    private func physicalKeyCode(from notification: Notification) -> UInt16? {
-        let rawKeyCode: UInt16?
-        if let direct = notification.userInfo?["keyCode"] as? UInt16 {
-            rawKeyCode = direct
-        } else if let number = notification.userInfo?["keyCode"] as? NSNumber {
-            rawKeyCode = number.uint16Value
-        } else if let intCode = notification.userInfo?["keyCode"] as? Int,
-                  intCode >= 0,
-                  intCode <= Int(UInt16.max) {
-            rawKeyCode = UInt16(intCode)
+        let keyCode = KeyboardLayoutInfo.canonicalKeyCode(for: activity.keyCode)
+        if activity.isDown {
+            pressedKeys.insert(keyCode)
+            if KeyboardLayoutInfo.allKeys.contains(where: { $0.id == keyCode }) {
+                selectedKey = keyCode
+            }
         } else {
-            rawKeyCode = nil
+            pressedKeys.remove(keyCode)
         }
-        guard let rawKeyCode else { return nil }
-        return KeyboardLayoutInfo.canonicalKeyCode(for: rawKeyCode)
     }
 }
 
@@ -274,6 +326,8 @@ struct KeyRow: View {
     let containerWidth: CGFloat
     @Binding var selectedKey: UInt16?
     let pressedKeys: Set<UInt16>
+    let previewSession: KeyEditorGlowPreviewSession
+    @ObservedObject var layoutStore: KeyLayoutStore
     let showArrowSubRow: Bool
 
     var body: some View {
@@ -289,6 +343,8 @@ struct KeyRow: View {
                     containerWidth: containerWidth,
                     isSelected: selectedKey == key.id,
                     isPressed: pressedKeys.contains(key.id),
+                    previewSession: previewSession,
+                    layoutStore: layoutStore,
                     onSelect: { selectedKey = key.id }
                 )
             }
@@ -300,6 +356,8 @@ struct KeyRow: View {
                         containerWidth: containerWidth,
                         isSelected: selectedKey == key.id,
                         isPressed: pressedKeys.contains(key.id),
+                        previewSession: previewSession,
+                        layoutStore: layoutStore,
                         onSelect: { selectedKey = key.id },
                         verticalOffset: key.id == 126 ? -12 : 12
                     )
@@ -316,11 +374,11 @@ struct DraggableKeyView: View {
     let containerWidth: CGFloat
     let isSelected: Bool
     let isPressed: Bool
+    let previewSession: KeyEditorGlowPreviewSession
+    @ObservedObject var layoutStore: KeyLayoutStore
     let onSelect: () -> Void
     var verticalOffset: CGFloat = 0
 
-    @ObservedObject private var positionManager = KeyPositionManager.shared
-    @ObservedObject private var keyWidthManager = KeyWidthManager.shared
     @State private var dragOffset: CGFloat = 0
 
     private var keyWidth: CGFloat {
@@ -328,19 +386,19 @@ struct DraggableKeyView: View {
     }
 
     private var currentOffset: CGFloat {
-        positionManager.effectiveOffset(for: key.id)
+        layoutStore.effectiveOffset(for: key.id)
     }
 
     private var hasWidthOverride: Bool {
-        keyWidthManager.hasDirectOverride(for: key.id)
+        layoutStore.hasWidthMultiplierOverride(for: key.id)
     }
 
     private var effectiveWidthMultiplier: CGFloat {
-        keyWidthManager.effectiveWidthMultiplier(for: key.id)
+        layoutStore.effectiveWidthMultiplier(for: key.id)
     }
 
     private var effectiveKeyWidth: CGFloat {
-        keyWidthManager.effectiveWidth(for: key.id, defaultWidth: key.width)
+        layoutStore.effectiveWidth(for: key.id, defaultWidth: key.width)
     }
 
     private var adjustedPosition: CGFloat {
@@ -351,29 +409,46 @@ struct DraggableKeyView: View {
         currentOffset != 0 || effectiveWidthMultiplier != 1.0
     }
 
+    private var accessibilityValue: String {
+        let offset = String(format: "%.1f percent", currentOffset * 100)
+        let width = Int(effectiveWidthMultiplier * 100)
+        return "Offset \(offset), glow width \(width) percent\(isModified ? ", modified" : "")"
+    }
+
     private func postPreview(position: CGFloat) {
-        NotificationCenter.default.post(
-            name: .showGlowPreview,
-            object: nil,
-            userInfo: [
-                "keyCode": key.id,
-                "position": position,
-                "keyWidth": effectiveKeyWidth
-            ]
+        previewSession.show(
+            keyCode: key.id,
+            position: position,
+            keyWidth: effectiveKeyWidth
         )
     }
 
     private func scheduleHidePreview(after delay: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            NotificationCenter.default.post(name: .hideGlowPreview, object: nil)
-        }
+        previewSession.scheduleHide(after: delay)
+    }
+
+    private func selectAndPreview() {
+        onSelect()
+        postPreview(position: key.position + currentOffset)
+        scheduleHidePreview(after: 1.0)
+    }
+
+    private func nudge(_ direction: MoveCommandDirection, isLargeStep: Bool) {
+        guard direction == .left || direction == .right else { return }
+        onSelect()
+        let step: CGFloat = isLargeStep ? 0.01 : 0.001
+        let signedStep = direction == .left ? -step : step
+        layoutStore.setOffset(currentOffset + signedStep, for: key.id)
+        postPreview(position: key.position + layoutStore.effectiveOffset(for: key.id))
+        scheduleHidePreview(after: 0.5)
     }
 
     var body: some View {
         GeometryReader { geometry in
             let xPosition = adjustedPosition * containerWidth
 
-            Text(key.label)
+            Button(action: selectAndPreview) {
+                Text(key.label)
                 .font(.system(size: key.width > 1.5 ? 10 : 11, weight: .medium))
                 .foregroundColor(isSelected ? .white : .primary)
                 .frame(width: keyWidth, height: verticalOffset != 0 ? 20 : 32)
@@ -398,13 +473,16 @@ struct DraggableKeyView: View {
                             .fill(Color.purple)
                             .frame(width: 6, height: 6)
                             .offset(x: -3, y: 3)
-                    }
+                        }
                 }
+            }
+                .buttonStyle(.plain)
                 .position(x: xPosition, y: geometry.size.height / 2 + verticalOffset)
                 .gesture(
                     DragGesture()
                         .onChanged { value in
                             onSelect()
+                            layoutStore.beginGestureTransaction()
                             dragOffset = value.translation.width
 
                             let previewPosition = adjustedPosition
@@ -412,16 +490,29 @@ struct DraggableKeyView: View {
                         }
                         .onEnded { value in
                             let newOffset = currentOffset + value.translation.width / containerWidth
-                            positionManager.setOffset(newOffset, for: key.id)
+                            layoutStore.setOffset(newOffset, for: key.id)
+                            layoutStore.endGestureTransaction()
                             dragOffset = 0
 
                             scheduleHidePreview(after: 0.5)
                         }
                 )
-                .onTapGesture {
-                    onSelect()
-                    postPreview(position: key.position + currentOffset)
-                    scheduleHidePreview(after: 1.0)
+                .onMoveCommand { direction in
+                    nudge(direction, isLargeStep: NSEvent.modifierFlags.contains(.shift))
+                }
+                .accessibilityLabel(key.label)
+                .accessibilityValue(accessibilityValue)
+                .accessibilityHint("Press to preview. Use Left and Right Arrow to adjust position; hold Shift for larger steps.")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityAdjustableAction { direction in
+                    switch direction {
+                    case .increment:
+                        nudge(.right, isLargeStep: false)
+                    case .decrement:
+                        nudge(.left, isLargeStep: false)
+                    @unknown default:
+                        break
+                    }
                 }
         }
     }

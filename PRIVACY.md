@@ -1,48 +1,47 @@
 # KeyLight Privacy Policy
 
-Last updated: February 27, 2026
+Last updated: August 30, 2026
+
 This privacy policy is informational and not legal advice.
 
 ## Summary
 
-KeyLight is a local macOS app. It does not collect personal data and does not send data to external servers or require an internet connection.
+KeyLight is a local macOS app. It does not collect personal data, use analytics, show advertising, require an account, or upload your typing or settings.
 
 ## What KeyLight accesses
 
-- Input Monitoring events (required to detect global key press/release state).
-- Local app settings stored in `UserDefaults`.
-- Local files only when you explicitly transfer data:
-  - layout profiles via JSON import/export
-  - theme strings via copy/import
+- Input Monitoring is required to detect global key press and release state. KeyLight keeps only the key identity, direction, repeat state, source, and timing needed to draw the effect. It does not keep typed characters or a typing history.
+- Physical Refraction can optionally use Screen Recording after you press its permission button. The other effects do not need it.
+- Settings, themes, keyboard layouts, and configuration snapshots are stored locally on your Mac.
+- Files are read or written only when you explicitly import or export a theme, layout, or configuration snapshot.
+
+## Physical Refraction
+
+Physical Refraction captures only a shallow strip along the bottom of each selected display while the effect is visible. KeyLight keeps at most the newest frame for each display and passes it directly to the GPU.
+
+The captured image is not saved, copied to the clipboard, read with OCR, logged, or sent anywhere. Capture stops when the effect finishes, when KeyLight is disabled, when the effect changes, when the Mac sleeps, or when KeyLight quits.
 
 ## What KeyLight does not do
 
-- No telemetry
-- No analytics SDKs
-- No cloud sync (use the import function to transfer layouts and themes)
-- No account/login system
-- No background network upload of your data
-- No keystroke content logging by design
+- No telemetry or analytics
+- No cloud sync or account system
+- No keystroke content logging
+- No saved screenshots or captured-image history
+- No background upload of settings, themes, layouts, or snapshots
+- No scripts, plugins, or executable code loaded from imported files
 
-## Data storage
+## Updates and network access
 
-KeyLight stores settings locally on your Mac, including:
+The unsigned KeyLight v2.0.0 release has no configured update feed or update key. Its update controls remain unavailable and it does not make update-check requests. Download future versions manually from the official GitHub Releases page.
 
-- Effect settings (color, size, fade, mode)
-- Saved themes/profiles
-- Key position/width adjustments
+The source includes support for a signed Sparkle update feed if a future Developer ID release configures one. Automatic checks remain off until explicitly enabled, and KeyLight does not send a system profile or custom identifiers.
 
-You can export and delete this data at any time from within the app.
+## Local data
 
-## Community presets / imported files
+KeyLight stores its preferences in the normal macOS application preferences. This includes effect settings, themes, keyboard layouts, calibration, display routing, shortcuts, and saved configuration snapshots.
 
-Imported presets are treated as untrusted data and parsed as JSON or text only.
-No scripts, plugins, or executable code are loaded from imported files. But users should treat all such as insecure and not blindly trust others (general caution and common sense).
-
-## Security note
-
-Keep macOS and KeyLight updated. There is not yet an auto update function, you will need to uninstall and install a new version from the GitHub repo. Only import presets/settings from sources you trust.
+You can remove this data by deleting KeyLight's preferences. Input Monitoring and Screen Recording permissions are controlled separately by macOS in System Settings.
 
 ## General
 
-KeyLight is distributed under the MIT License. The MIT License already includes warranty/liability disclaimer language ("AS IS", without warranty).
+KeyLight is distributed under the MIT License and comes without warranty as described in that license.

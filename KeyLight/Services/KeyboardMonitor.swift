@@ -11,91 +11,62 @@ private let enableDebugLogging = false
 #endif
 private let systemDefinedEventRawValue: UInt32 = 14
 
-/// Represents a keyboard event with key code, state, position and width
-struct KeyEvent: Sendable {
-    let keyCode: UInt16
-    let isKeyDown: Bool
-    let horizontalPosition: CGFloat
-    let keyWidth: CGFloat
-}
-
-/// Monitors global keyboard events using CGEventTap
-/// SAFETY: KeyboardMonitor state is confined to the main run loop.
-/// C callbacks only interact with the instance via main-run-loop scheduled work.
+/// Monitors global keyboard events using a listen-only CGEventTap.
+///
+/// The event tap, decoder, and narrowly allow-listed HID fallback are confined
+/// to one dedicated serial CFRunLoop thread. Only normalized value events cross
+/// to the main actor, keeping AppKit layout and rendering out of the event-tap
+/// timeout path.
 final class KeyboardMonitor: @unchecked Sendable {
-    private enum MediaEventSource {
-        case systemDefined
-        case hid
-    }
-
-    private enum KeyboardResolutionConfidence {
-        case high
-        case unknown
-    }
-
-    private struct KeyboardResolution {
-        let keyCode: UInt16
-        let confidence: KeyboardResolutionConfidence
-    }
+    /// The privacy-critical tap mode is a runtime contract, not merely a
+    /// source-code convention. Keeping it in one value lets tests verify the
+    /// actual option passed to Core Graphics without reading protected source
+    /// folders or requesting Files & Folders access.
+    static let eventTapOptions: CGEventTapOptions = .listenOnly
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var callback: ((KeyEvent) -> Void)?
+    private var callback: (@MainActor (KeyEvent) -> Void)?
+    private var onStreamReset: ((KeyboardMonitor) -> Void)?
+    private var onBecameUnavailable: ((KeyboardMonitor) -> Void)?
     private var hidManager: IOHIDManager?
-
-    private var recentMediaEventTimes: [UInt32: CFAbsoluteTime] = [:]
-    private var recentHIDMediaEventTimes: [UInt32: CFAbsoluteTime] = [:]
-    private var recentSystemMediaEventTimes: [UInt32: CFAbsoluteTime] = [:]
-    private var recentTrustedKeyboardTopRowEvents: [Bool: (keyCode: UInt16, timestamp: CFAbsoluteTime)] = [:]
-    private var modifierKeyStates: [UInt16: Bool] = [:]
-    private var lastCapsLockTransitionTime: CFAbsoluteTime = -1
-    private let mediaDedupWindow: CFAbsoluteTime = 0.03
-    private let keyboardTopRowSourceWindow: CFAbsoluteTime = 0.04
-    private let capsLockSystemEventGuardWindow: CFAbsoluteTime = 0.08
+    private var decoder = KeyboardEventDecoder()
     private let capsLockPulseDuration: TimeInterval = 0.1
+    private let lifecycleLock = NSLock()
+    private var eventThread: Thread?
+    private var eventRunLoop: CFRunLoop?
+    private var eventLoopStopped: DispatchSemaphore?
+    private var running = false
+    private var eventSequence: UInt64 = 0
 
-    // Legacy compatibility mapping for system-defined media key events.
-    private static let legacyNXMap: [Int: UInt16] = [
-        0: 500,   // Brightness Down
-        1: 501,   // Brightness Up
-        2: 502,   // Mission Control
-        3: 503,   // Spotlight/Launchpad
-        7: 507,   // Legacy F8 media position
-        16: 516,  // Play/Pause
-        17: 517,  // Next
-        18: 518,  // Mute
-    ]
+    private struct HIDUsage: Hashable {
+        let page: UInt32
+        let usage: UInt32
+    }
 
-    // Canonical NX_* mapping from ev_keymap.h.
-    private static let canonicalNXMap: [Int: UInt16] = [
-        3: 500,   // NX_KEYTYPE_BRIGHTNESS_DOWN
-        2: 501,   // NX_KEYTYPE_BRIGHTNESS_UP
-        18: 506,  // NX_KEYTYPE_PREVIOUS
-        16: 516,  // NX_KEYTYPE_PLAY
-        17: 517,  // NX_KEYTYPE_NEXT
-        7: 518,   // NX_KEYTYPE_MUTE
-        1: 519,   // NX_KEYTYPE_SOUND_DOWN
-        0: 520,   // NX_KEYTYPE_SOUND_UP
-    ]
-    private static let canonicalPreferredNXCodes: Set<Int> = [0, 1, 2, 3, 7, 16, 17, 18]
-
-    // Consumer-page HID usages mapped to the same virtual key codes as systemDefined events.
-    private static let hidConsumerUsageMap: [UInt32: UInt16] = [
-        UInt32(kHIDUsage_Csmr_DisplayBrightnessDecrement): 500,
-        UInt32(kHIDUsage_Csmr_DisplayBrightnessIncrement): 501,
-        UInt32(kHIDUsage_Csmr_KeyboardBrightnessDecrement): 500,
-        UInt32(kHIDUsage_Csmr_KeyboardBrightnessIncrement): 501,
-        UInt32(kHIDUsage_Csmr_ScanPreviousTrack): 506,
-        UInt32(kHIDUsage_Csmr_Rewind): 506,
-        UInt32(kHIDUsage_Csmr_Play): 516,
-        UInt32(kHIDUsage_Csmr_Pause): 516,
-        UInt32(kHIDUsage_Csmr_PlayOrPause): 516,
-        UInt32(kHIDUsage_Csmr_PlayOrSkip): 516,
-        UInt32(kHIDUsage_Csmr_ScanNextTrack): 517,
-        UInt32(kHIDUsage_Csmr_FastForward): 517,
-        UInt32(kHIDUsage_Csmr_Mute): 518,
-        UInt32(kHIDUsage_Csmr_VolumeDecrement): 519,
-        UInt32(kHIDUsage_Csmr_VolumeIncrement): 520,
+    // Keep the fallback privacy boundary narrow: declared media controls, the
+    // Generic Desktop Do Not Disturb usage, and the three physical Keyboard-
+    // page function usages Apple hardware may expose before Fn remapping.
+    private static let hidUsageMap: [HIDUsage: UInt16] = [
+        HIDUsage(page: UInt32(kHIDPage_GenericDesktop), usage: UInt32(kHIDUsage_GD_DoNotDisturb)): 505,
+        HIDUsage(page: UInt32(kHIDPage_KeyboardOrKeypad), usage: UInt32(kHIDUsage_KeyboardF6)): 505,
+        HIDUsage(page: UInt32(kHIDPage_KeyboardOrKeypad), usage: UInt32(kHIDUsage_KeyboardF7)): 506,
+        HIDUsage(page: UInt32(kHIDPage_KeyboardOrKeypad), usage: UInt32(kHIDUsage_KeyboardF9)): 517,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_DisplayBrightnessDecrement)): 500,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_DisplayBrightnessIncrement)): 501,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_KeyboardBrightnessDecrement)): 500,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_KeyboardBrightnessIncrement)): 501,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ScanPreviousTrack)): 506,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_Rewind)): 506,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_Play)): 516,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_Pause)): 516,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_PlayOrPause)): 516,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_PlayOrSkip)): 516,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ScanNextTrack)): 517,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_FastForward)): 517,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_Mute)): 518,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_VolumeDecrement)): 519,
+        HIDUsage(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_VolumeIncrement)): 520,
     ]
 
     private static let modifierKeyFlagMaskByKeyCode: [UInt16: CGEventFlags] = [
@@ -111,77 +82,101 @@ final class KeyboardMonitor: @unchecked Sendable {
         57: .maskAlphaShift
     ]
 
-    private static let modifierCounterpartKeyCode: [UInt16: UInt16] = [
-        55: 54,
-        54: 55,
-        58: 61,
-        61: 58,
-        59: 62,
-        62: 59,
-        56: 60,
-        60: 56
-    ]
-
-    private static let functionCharacterToFunctionKeyCode: [UInt32: UInt16] = [
-        0xF704: 122, // F1
-        0xF705: 120, // F2
-        0xF706: 99,  // F3
-        0xF707: 118, // F4
-        0xF708: 96,  // F5
-        0xF709: 97,  // F6
-        0xF70A: 98,  // F7
-        0xF70B: 100, // F8
-        0xF70C: 101, // F9
-        0xF70D: 109, // F10
-        0xF70E: 103, // F11
-        0xF70F: 111  // F12
-    ]
-
-    private static let specialKeyRawValueToFunctionKeyCode: [Int: UInt16] = [
-        NSEvent.SpecialKey.f1.rawValue: 122,
-        NSEvent.SpecialKey.f2.rawValue: 120,
-        NSEvent.SpecialKey.f3.rawValue: 99,
-        NSEvent.SpecialKey.f4.rawValue: 118,
-        NSEvent.SpecialKey.f5.rawValue: 96,
-        NSEvent.SpecialKey.f6.rawValue: 97,
-        NSEvent.SpecialKey.f7.rawValue: 98,
-        NSEvent.SpecialKey.f8.rawValue: 100,
-        NSEvent.SpecialKey.f9.rawValue: 101,
-        NSEvent.SpecialKey.f10.rawValue: 109,
-        NSEvent.SpecialKey.f11.rawValue: 103,
-        NSEvent.SpecialKey.f12.rawValue: 111
-    ]
-
-    // Trusted raw keyboard codes observed on media-mode top-row keys.
-    // These are only used when specialKey/scalar metadata is absent.
-    private static let trustedTopRowRawFunctionKeyCodeMap: [UInt16: UInt16] = [
-        145: 122, // F1
-        144: 120, // F2
-        160: 99,  // F3
-        131: 118, // F4
-        177: 96,  // F5
-        176: 97,  // F6
-        173: 98,  // F7
-        174: 100, // F8
-        175: 101, // F9
-        74: 109,  // F10
-        73: 103,  // F11
-        72: 111   // F12
-    ]
-
-    private static let topRowFunctionKeyCodes: Set<UInt16> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
-
-    init(callback: @escaping (KeyEvent) -> Void) {
+    init(
+        onStreamReset: ((KeyboardMonitor) -> Void)? = nil,
+        onBecameUnavailable: ((KeyboardMonitor) -> Void)? = nil,
+        callback: @escaping @MainActor (KeyEvent) -> Void
+    ) {
+        self.onStreamReset = onStreamReset
+        self.onBecameUnavailable = onBecameUnavailable
         self.callback = callback
     }
 
-    func start() {
-        recentMediaEventTimes.removeAll()
-        recentHIDMediaEventTimes.removeAll()
-        recentSystemMediaEventTimes.removeAll()
-        recentTrustedKeyboardTopRowEvents.removeAll()
-        modifierKeyStates.removeAll()
-        lastCapsLockTransitionTime = -1
+    var isRunning: Bool {
+        lifecycleLock.withLock { running }
+    }
+
+    @discardableResult
+    func start() -> Bool {
+        if isRunning {
+            return true
+        }
+        let canStart = lifecycleLock.withLock {
+            eventThread == nil && eventRunLoop == nil
+        }
+        guard canStart else {
+            return false
+        }
+
+        let started = DispatchSemaphore(value: 0)
+        let stopped = DispatchSemaphore(value: 0)
+        let thread = Thread { [weak self] in
+            self?.runEventLoop(started: started, stopped: stopped)
+        }
+        thread.name = "KeyLight Keyboard Event Loop"
+        thread.qualityOfService = .userInteractive
+        lifecycleLock.withLock {
+            eventThread = thread
+            eventLoopStopped = stopped
+        }
+        thread.start()
+
+        guard started.wait(timeout: .now() + 2) == .success else {
+            KeyLightLogger.keyboardMonitor.error("Keyboard event loop did not start in time")
+            stop()
+            return false
+        }
+        return isRunning
+    }
+
+    private func runEventLoop(
+        started: DispatchSemaphore,
+        stopped: DispatchSemaphore
+    ) {
+        autoreleasepool {
+            guard let runLoop = CFRunLoopGetCurrent() else {
+                lifecycleLock.withLock {
+                    running = false
+                    eventThread = nil
+                }
+                started.signal()
+                stopped.signal()
+                return
+            }
+            lifecycleLock.withLock {
+                eventRunLoop = runLoop
+            }
+            decoder.reset()
+
+            guard installEventTap(on: runLoop) else {
+                lifecycleLock.withLock {
+                    running = false
+                    eventRunLoop = nil
+                    eventThread = nil
+                }
+                started.signal()
+                stopped.signal()
+                return
+            }
+
+            startHIDMediaMonitoring(on: runLoop)
+            lifecycleLock.withLock { running = true }
+            started.signal()
+            KeyLightLogger.keyboardMonitor.notice("Keyboard monitor started")
+            CFRunLoopRun()
+
+            tearDownEventSources(on: runLoop)
+            decoder.reset()
+            lifecycleLock.withLock {
+                running = false
+                eventRunLoop = nil
+                eventThread = nil
+            }
+            stopped.signal()
+        }
+    }
+
+    private func installEventTap(on runLoop: CFRunLoop) -> Bool {
 
         let eventMask =
             (1 << CGEventType.keyDown.rawValue) |
@@ -195,7 +190,7 @@ final class KeyboardMonitor: @unchecked Sendable {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: Self.eventTapOptions,
             eventsOfInterest: CGEventMask(eventMask),
             callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
                 guard let refcon = refcon else {
@@ -204,10 +199,15 @@ final class KeyboardMonitor: @unchecked Sendable {
 
                 let monitor = Unmanaged<KeyboardMonitor>.fromOpaque(refcon).takeUnretainedValue()
 
-                if type == .tapDisabledByTimeout {
-                    if enableDebugLogging { print("KeyboardMonitor: Tap was disabled, re-enabling...") }
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    KeyLightLogger.keyboardMonitor.notice("Event tap was disabled; attempting to re-enable it")
                     if let tap = monitor.eventTap {
                         CGEvent.tapEnable(tap: tap, enable: true)
+                        monitor.reportEventTapRecoveryOutcome(
+                            reenabled: CGEvent.tapIsEnabled(tap: tap)
+                        )
+                    } else {
+                        monitor.reportEventTapRecoveryOutcome(reenabled: false)
                     }
                     return Unmanaged.passUnretained(event)
                 }
@@ -225,65 +225,122 @@ final class KeyboardMonitor: @unchecked Sendable {
                 if type == .keyDown || type == .keyUp {
                     let rawKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let isKeyDown = (type == .keyDown)
+                    let isRepeat = isKeyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0
                     if rawKeyCode == 57 {
-                        monitor.lastCapsLockTransitionTime = CFAbsoluteTimeGetCurrent()
+                        monitor.decoder.recordCapsLockTransition(
+                            at: ProcessInfo.processInfo.systemUptime
+                        )
                     }
-                    let resolution = monitor.resolveKeyboardEventKeyCode(rawKeyCode: rawKeyCode, event: event)
-                    guard resolution.confidence == .high else {
+                    guard let decoded = monitor.decodeKeyboardEvent(
+                        rawKeyCode: rawKeyCode,
+                        isKeyDown: isKeyDown,
+                        isRepeat: isRepeat
+                    ) else {
                         #if DEBUG
                         if enableDebugLogging {
-                            KeyLightLog("Skipping unresolved keyboard event keyCode \(rawKeyCode)")
+                            KeyLightLogger.keyboardMonitor.debug("Skipping an unresolved keyboard event")
                         }
                         #endif
                         return Unmanaged.passUnretained(event)
                     }
 
-                    let keyCode = resolution.keyCode
-                    if monitor.isTopRowFunctionKeyCode(keyCode) {
-                        monitor.recordTrustedKeyboardTopRowEvent(keyCode: keyCode, isKeyDown: isKeyDown)
-                    }
-                    monitor.emitMappedKeyEvent(keyCode: keyCode, isKeyDown: isKeyDown)
+                    let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: decoded.keyCode)
+                    monitor.decoder.recordTrustedKeyboardTopRowEvent(
+                        canonicalKeyCode: canonicalKeyCode,
+                        isKeyDown: decoded.isKeyDown,
+                        now: ProcessInfo.processInfo.systemUptime
+                    )
+                    monitor.emitMappedKeyEvent(decoded)
                 }
 
                 return Unmanaged.passUnretained(event)
             },
             userInfo: refcon
         ) else {
-            print("KeyboardMonitor: FAILED to create event tap!")
-            print("KeyboardMonitor: Make sure Input Monitoring permission is granted in System Settings")
-            return
+            KeyLightLogger.keyboardMonitor.error("Failed to create the keyboard event tap")
+            return false
         }
 
-        if enableDebugLogging { print("KeyboardMonitor: Event tap created successfully!") }
         eventTap = tap
 
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            KeyLightLogger.keyboardMonitor.error("Failed to create the keyboard event tap run-loop source")
+            eventTap = nil
+            return false
+        }
+        runLoopSource = source
+        CFRunLoopAddSource(runLoop, source, .commonModes)
 
         CGEvent.tapEnable(tap: tap, enable: true)
-        if enableDebugLogging { print("KeyboardMonitor: Listening for keyboard events...") }
-        startHIDMediaMonitoring()
+        guard CGEvent.tapIsEnabled(tap: tap) else {
+            KeyLightLogger.keyboardMonitor.error("Keyboard event tap could not be enabled")
+            CFRunLoopRemoveSource(runLoop, source, .commonModes)
+            runLoopSource = nil
+            eventTap = nil
+            return false
+        }
+        return true
     }
 
     func stop() {
+        let state = lifecycleLock.withLock {
+            (eventRunLoop, eventLoopStopped, eventThread)
+        }
+        if let runLoop = state.0 {
+            if state.2 === Thread.current {
+                CFRunLoopStop(runLoop)
+            } else {
+                CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
+                    CFRunLoopStop(runLoop)
+                }
+                CFRunLoopWakeUp(runLoop)
+                _ = state.1?.wait(timeout: .now() + 2)
+            }
+        }
+        lifecycleLock.withLock {
+            running = false
+            eventRunLoop = nil
+            eventThread = nil
+            eventLoopStopped = nil
+        }
+        callback = nil
+        onStreamReset = nil
+        onBecameUnavailable = nil
+        KeyLightLogger.keyboardMonitor.debug("Keyboard monitor stopped")
+    }
+
+    private func tearDownEventSources(on runLoop: CFRunLoop) {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
         if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopRemoveSource(runLoop, source, .commonModes)
         }
-        stopHIDMediaMonitoring()
+        stopHIDMediaMonitoring(from: runLoop)
         eventTap = nil
         runLoopSource = nil
-        recentMediaEventTimes.removeAll()
-        recentHIDMediaEventTimes.removeAll()
-        recentSystemMediaEventTimes.removeAll()
-        recentTrustedKeyboardTopRowEvents.removeAll()
-        modifierKeyStates.removeAll()
-        callback = nil
     }
 
-    private func startHIDMediaMonitoring() {
+    private func reportEventTapRecoveryOutcome(reenabled: Bool) {
+        guard reenabled else {
+            KeyLightLogger.keyboardMonitor.error("Event tap could not be re-enabled")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                onBecameUnavailable?(self)
+            }
+            return
+        }
+
+        // Modifier state and deduplication windows are stream-derived too; a
+        // timeout can make them stale even when the tap itself recovers.
+        decoder.reset()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            onStreamReset?(self)
+        }
+    }
+
+    private func startHIDMediaMonitoring(on runLoop: CFRunLoop) {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         let context = Unmanaged.passUnretained(self).toOpaque()
 
@@ -294,35 +351,81 @@ final class KeyboardMonitor: @unchecked Sendable {
         }
 
         IOHIDManagerRegisterInputValueCallback(manager, callback, context)
+        let allowedValueMatches: [[String: Int]] = Self.hidUsageMap.keys
+            .sorted {
+                if $0.page == $1.page { return $0.usage < $1.usage }
+                return $0.page < $1.page
+            }
+            .map { usage in
+                [
+                    kIOHIDElementUsagePageKey as String: Int(usage.page),
+                    kIOHIDElementUsageKey as String: Int(usage.usage)
+                ]
+            }
+        IOHIDManagerSetInputValueMatchingMultiple(
+            manager,
+            allowedValueMatches as CFArray
+        )
         IOHIDManagerSetDeviceMatching(manager, nil)
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        IOHIDManagerScheduleWithRunLoop(
+            manager,
+            runLoop,
+            CFRunLoopMode.commonModes.rawValue
+        )
 
         let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         if openResult != kIOReturnSuccess {
-            KeyLightLog("HID fallback unavailable (open result: \(openResult))")
-            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+            KeyLightLogger.keyboardMonitor.warning("Optional HID media-key fallback is unavailable")
+            IOHIDManagerUnscheduleFromRunLoop(
+                manager,
+                runLoop,
+                CFRunLoopMode.commonModes.rawValue
+            )
             return
         }
 
         hidManager = manager
     }
 
-    private func stopHIDMediaMonitoring() {
+    private func stopHIDMediaMonitoring(from runLoop: CFRunLoop) {
         guard let manager = hidManager else { return }
-        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        IOHIDManagerUnscheduleFromRunLoop(
+            manager,
+            runLoop,
+            CFRunLoopMode.commonModes.rawValue
+        )
         IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         hidManager = nil
     }
 
     private func handleSystemDefinedCGEvent(_ event: CGEvent) {
-        guard let systemEvent = NSEvent(cgEvent: event) else { return }
-        handleMediaKeyEvent(systemEvent)
+        // NSEvent construction consults Text Input Services and is main-queue
+        // isolated on current macOS releases. Doing that work directly in the
+        // dedicated event-tap run loop triggers libdispatch's queue assertion
+        // after ordinary typing. Copy the immutable CGEvent, extract only the
+        // system-defined media metadata on the main queue, then return that
+        // value metadata to the event loop where decoder state is confined.
+        let eventBox = SendableCGEvent(event.copy() ?? event)
+        let eventTime = ProcessInfo.processInfo.systemUptime
+        DispatchQueue.main.async { [weak self, eventBox] in
+            guard let self,
+                  let systemEvent = NSEvent(cgEvent: eventBox.value) else {
+                return
+            }
+            self.enqueueSystemDefinedMediaEvent(
+                subtypeRawValue: Int(systemEvent.subtype.rawValue),
+                data1: UInt32(truncatingIfNeeded: systemEvent.data1),
+                eventTime: eventTime
+            )
+        }
     }
 
     private func handleFlagsChangedCGEvent(_ event: CGEvent) {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         if keyCode == 57 {
-            lastCapsLockTransitionTime = CFAbsoluteTimeGetCurrent()
+            decoder.recordCapsLockTransition(
+                at: ProcessInfo.processInfo.systemUptime
+            )
         }
         guard let isKeyDown = resolveModifierFlagsChanged(keyCode: keyCode, flags: event.flags) else { return }
         if keyCode == 57 {
@@ -332,160 +435,158 @@ final class KeyboardMonitor: @unchecked Sendable {
         emitMappedKeyEvent(keyCode: keyCode, isKeyDown: isKeyDown)
     }
 
-    private func handleMediaKeyEvent(_ event: NSEvent) {
-        // Media keys arrive as system-defined subtype 8 events.
-        guard event.subtype.rawValue == 8 else { return }
-
-        let data1 = UInt32(truncatingIfNeeded: event.data1)
-        let nxKeyCode = Int((data1 & 0xFFFF0000) >> 16)
-        let keyState = Int((data1 & 0x0000FF00) >> 8)
-        // Some keyboards emit 0x00 for key-down in system-defined events.
-        let isKeyDown = (keyState == 0x0A || keyState == 0x00)
-        let isKeyUp = (keyState == 0x0B)
-
-        guard isKeyDown || isKeyUp else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-
-        // Some keyboards report Caps Lock transitions through NX code 4.
-        // Suppress those so they never masquerade as top-row media activity.
-        if nxKeyCode == 4,
-           lastCapsLockTransitionTime >= 0,
-           now - lastCapsLockTransitionTime < capsLockSystemEventGuardWindow {
+    private func enqueueSystemDefinedMediaEvent(
+        subtypeRawValue: Int,
+        data1: UInt32,
+        eventTime: TimeInterval
+    ) {
+        guard let runLoop = lifecycleLock.withLock({ eventRunLoop }) else {
             return
         }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
+            [weak self] in
+            self?.handleSystemDefinedMediaEvent(
+                subtypeRawValue: subtypeRawValue,
+                data1: data1,
+                eventTime: eventTime
+            )
+        }
+        CFRunLoopWakeUp(runLoop)
+    }
 
-        guard let virtualKeyCode = resolveVirtualKeyCode(nxCode: nxKeyCode) else { return }
-        emitMediaKeyEvent(keyCode: virtualKeyCode, isKeyDown: isKeyDown, source: .systemDefined)
+    private func handleSystemDefinedMediaEvent(
+        subtypeRawValue: Int,
+        data1: UInt32,
+        eventTime: TimeInterval
+    ) {
+        guard let transition = decoder.decodeSystemDefinedMediaEvent(
+            subtypeRawValue: subtypeRawValue,
+            data1: data1,
+            now: eventTime
+        ) else { return }
+        emitMediaKeyEvent(
+            keyCode: transition.keyCode,
+            isKeyDown: transition.isKeyDown,
+            source: .systemDefined
+        )
     }
 
     private func handleHIDInputValue(_ value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
         let usagePage = IOHIDElementGetUsagePage(element)
-        guard usagePage == UInt32(kHIDPage_Consumer) else { return }
-
         let usage = IOHIDElementGetUsage(element)
-        guard let virtualKeyCode = Self.hidConsumerUsageMap[usage] else { return }
+        guard let virtualKeyCode = Self.hidUsageMap[HIDUsage(page: usagePage, usage: usage)] else { return }
 
         let isKeyDown = IOHIDValueGetIntegerValue(value) != 0
         emitMediaKeyEvent(keyCode: virtualKeyCode, isKeyDown: isKeyDown, source: .hid)
     }
 
-    private func emitMediaKeyEvent(keyCode: UInt16, isKeyDown: Bool, source: MediaEventSource) {
-        let now = CFAbsoluteTimeGetCurrent()
-        if shouldDedupeMediaEvent(keyCode: keyCode, isKeyDown: isKeyDown, source: source, now: now) {
+    private func emitMediaKeyEvent(
+        keyCode: UInt16,
+        isKeyDown: Bool,
+        source: KeyboardEventDecoder.MediaEventSource
+    ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: keyCode)
+        if decoder.shouldDedupeMediaEvent(
+            canonicalKeyCode: canonicalKeyCode,
+            isKeyDown: isKeyDown,
+            source: source,
+            now: now
+        ) {
             return
         }
 
-        emitMappedKeyEvent(keyCode: keyCode, isKeyDown: isKeyDown)
+        let normalizedSource: KeyboardEvent.Source
+        switch source {
+        case .systemDefined:
+            normalizedSource = .eventTap
+        case .hid:
+            normalizedSource = .consumerHID
+        }
+        emitMappedKeyEvent(
+            keyCode: canonicalKeyCode,
+            isKeyDown: isKeyDown,
+            source: normalizedSource
+        )
     }
 
-    private func emitMappedKeyEvent(keyCode: UInt16, isKeyDown: Bool) {
-        // HID callbacks are scheduled on the same run loop as the event tap.
-        MainActor.assumeIsolated {
-            let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: keyCode)
-            let keyInfo = KeyMapping.keyInfo(for: canonicalKeyCode)
-            let adjustedPosition = KeyPositionManager.shared.adjustedPosition(
-                for: canonicalKeyCode,
-                originalPosition: keyInfo.position
-            )
-            let effectiveKeyWidth = KeyWidthManager.shared.effectiveWidth(
-                for: canonicalKeyCode,
-                defaultWidth: keyInfo.width
-            )
+    private func emitMappedKeyEvent(
+        keyCode: UInt16,
+        isKeyDown: Bool,
+        isRepeat: Bool = false,
+        source: KeyboardEvent.Source = .eventTap
+    ) {
+        emitMappedKeyEvent(KeyEvent(
+            keyCode: keyCode,
+            isKeyDown: isKeyDown,
+            isRepeat: isRepeat,
+            source: source
+        ))
+    }
 
-            callback?(KeyEvent(
-                keyCode: canonicalKeyCode,
-                isKeyDown: isKeyDown,
-                horizontalPosition: adjustedPosition,
-                keyWidth: effectiveKeyWidth
-            ))
+    private func emitMappedKeyEvent(_ event: KeyEvent) {
+        let sequence = lifecycleLock.withLock { () -> UInt64 in
+            eventSequence &+= 1
+            return eventSequence
+        }
+        KeyLightSignposts.eventReceived(sequence: sequence)
+        let normalized = KeyEvent(
+            keyCode: KeyboardLayoutInfo.canonicalKeyCode(for: event.keyCode),
+            isKeyDown: event.isKeyDown,
+            isRepeat: event.isRepeat,
+            source: event.source,
+            sequence: sequence
+        )
+        KeyLightSignposts.eventNormalized(sequence: sequence)
+        Task { @MainActor [weak self] in
+            self?.callback?(normalized)
         }
     }
 
     private func emitCapsLockTransition(isKeyDown: Bool) {
         let keyCode: UInt16 = 57
-        let sequence = capsLockEmitSequence(isKeyDown: isKeyDown)
+        let sequence = decoder.capsLockEmitSequence(isKeyDown: isKeyDown)
         guard let first = sequence.first else { return }
         emitMappedKeyEvent(keyCode: keyCode, isKeyDown: first)
 
         if sequence.count > 1 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + capsLockPulseDuration) { [weak self] in
-                self?.emitMappedKeyEvent(keyCode: keyCode, isKeyDown: false)
+            let pulseDuration = capsLockPulseDuration
+            Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(pulseDuration))
+                } catch {
+                    return
+                }
+                self?.emitMappedKeyEvent(
+                    keyCode: keyCode,
+                    isKeyDown: false,
+                    source: .eventTap
+                )
             }
         }
-    }
-
-    private func capsLockEmitSequence(isKeyDown: Bool) -> [Bool] {
-        isKeyDown ? [true, false] : [false]
-    }
-
-    private func shouldDedupeMediaEvent(
-        keyCode: UInt16,
-        isKeyDown: Bool,
-        source: MediaEventSource,
-        now: CFAbsoluteTime
-    ) -> Bool {
-        let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: keyCode)
-        let dedupeKey = (UInt32(canonicalKeyCode) << 1) | (isKeyDown ? 1 : 0)
-
-        if shouldSuppressMediaEventForRecentTrustedKeyboardTopRow(
-            keyCode: canonicalKeyCode,
-            isKeyDown: isKeyDown,
-            now: now
-        ) {
-            return true
-        }
-
-        switch source {
-        case .hid:
-            if let lastHID = recentHIDMediaEventTimes[dedupeKey], now - lastHID < mediaDedupWindow {
-                return true
-            }
-            recentHIDMediaEventTimes[dedupeKey] = now
-        case .systemDefined:
-            // Prefer HID media events if both sources report the same press/release in the dedupe window.
-            if let lastHID = recentHIDMediaEventTimes[dedupeKey], now - lastHID < mediaDedupWindow {
-                return true
-            }
-            if let lastSystem = recentSystemMediaEventTimes[dedupeKey], now - lastSystem < mediaDedupWindow {
-                return true
-            }
-            recentSystemMediaEventTimes[dedupeKey] = now
-        }
-
-        recentMediaEventTimes[dedupeKey] = now
-        if recentMediaEventTimes.count > 64 {
-            recentMediaEventTimes = recentMediaEventTimes.filter { now - $0.value < mediaDedupWindow * 2 }
-        }
-        if recentHIDMediaEventTimes.count > 64 {
-            recentHIDMediaEventTimes = recentHIDMediaEventTimes.filter { now - $0.value < mediaDedupWindow * 2 }
-        }
-        if recentSystemMediaEventTimes.count > 64 {
-            recentSystemMediaEventTimes = recentSystemMediaEventTimes.filter { now - $0.value < mediaDedupWindow * 2 }
-        }
-        return false
     }
 
     private func resolveVirtualKeyCode(nxCode: Int) -> UInt16? {
-        if Self.canonicalPreferredNXCodes.contains(nxCode) {
-            return Self.canonicalNXMap[nxCode] ?? Self.legacyNXMap[nxCode]
-        }
-
-        return Self.canonicalNXMap[nxCode] ?? Self.legacyNXMap[nxCode]
+        decoder.resolveVirtualKeyCode(nxCode: nxCode)
     }
 
-    private func resolveKeyboardEventKeyCode(rawKeyCode: UInt16, event: CGEvent) -> KeyboardResolution {
-        let nsEvent = NSEvent(cgEvent: event)
-        let characters = nsEvent?.charactersIgnoringModifiers
-#if compiler(>=5.3)
-        let specialKey = nsEvent?.specialKey
-#else
-        let specialKey: NSEvent.SpecialKey? = nil
-#endif
-        return resolveKeyboardEventKeyCode(
+    private func decodeKeyboardEvent(
+        rawKeyCode: UInt16,
+        isKeyDown: Bool,
+        isRepeat: Bool
+    ) -> KeyEvent? {
+        // The established key table and explicit Apple top-row raw-code map
+        // resolve every input KeyLight supports. Never materialize NSEvent or
+        // consult character metadata on this non-main event thread.
+        return decoder.decodeKeyboardEvent(
             rawKeyCode: rawKeyCode,
-            charactersIgnoringModifiers: characters,
-            specialKeyRawValue: specialKey?.rawValue
+            isKeyDown: isKeyDown,
+            isRepeat: isRepeat,
+            source: .eventTap,
+            charactersIgnoringModifiers: nil,
+            specialKeyRawValue: nil,
+            isMappedKeyCode: isMappedKeyCode(rawKeyCode)
         )
     }
 
@@ -493,90 +594,48 @@ final class KeyboardMonitor: @unchecked Sendable {
         rawKeyCode: UInt16,
         charactersIgnoringModifiers: String?,
         specialKeyRawValue: Int?
-    ) -> KeyboardResolution {
-        if isMappedKeyCode(rawKeyCode) {
-            return KeyboardResolution(keyCode: rawKeyCode, confidence: .high)
-        }
-
-        if let specialKeyRawValue,
-           let functionKeyCode = Self.specialKeyRawValueToFunctionKeyCode[specialKeyRawValue] {
-            return KeyboardResolution(keyCode: functionKeyCode, confidence: .high)
-        }
-
-        if let scalar = charactersIgnoringModifiers?.unicodeScalars.first,
-           let functionKeyCode = Self.functionCharacterToFunctionKeyCode[scalar.value] {
-            return KeyboardResolution(keyCode: functionKeyCode, confidence: .high)
-        }
-
-        if let functionKeyCode = Self.trustedTopRowRawFunctionKeyCodeMap[rawKeyCode] {
-            return KeyboardResolution(keyCode: functionKeyCode, confidence: .high)
-        }
-
-        return KeyboardResolution(keyCode: rawKeyCode, confidence: .unknown)
+    ) -> KeyboardEventDecoder.KeyboardResolution {
+        decoder.resolveKeyboardEvent(
+            rawKeyCode: rawKeyCode,
+            charactersIgnoringModifiers: charactersIgnoringModifiers,
+            specialKeyRawValue: specialKeyRawValue,
+            isMappedKeyCode: isMappedKeyCode(rawKeyCode)
+        )
     }
 
     private func resolveModifierFlagsChanged(keyCode: UInt16, flags: CGEventFlags) -> Bool? {
         guard let mask = Self.modifierKeyFlagMaskByKeyCode[keyCode] else { return nil }
-        let isKeyDownFromFlags = flags.contains(mask)
-        let previous = modifierKeyStates[keyCode] ?? false
-
-        if previous == isKeyDownFromFlags {
-            // Shared masks (left/right command/option/control/shift): when one side is released
-            // while the other side stays held, macOS keeps the mask set. Use counterpart state
-            // to infer that this key transitioned to key-up.
-            if previous,
-               let counterpart = Self.modifierCounterpartKeyCode[keyCode],
-               modifierKeyStates[counterpart] == true {
-                modifierKeyStates[keyCode] = false
-                return false
-            }
-            return nil
-        }
-
-        modifierKeyStates[keyCode] = isKeyDownFromFlags
-        return isKeyDownFromFlags
+        return decoder.resolveModifierFlagsChanged(
+            keyCode: keyCode,
+            flagIsSet: flags.contains(mask)
+        )
     }
 
     private func isMappedKeyCode(_ keyCode: UInt16) -> Bool {
-        MainActor.assumeIsolated {
-            KeyMapping.hasMappedKeyCode(keyCode)
-        }
-    }
-
-    private func isTopRowFunctionKeyCode(_ keyCode: UInt16) -> Bool {
-        let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: keyCode)
-        return Self.topRowFunctionKeyCodes.contains(canonicalKeyCode)
-    }
-
-    private func recordTrustedKeyboardTopRowEvent(keyCode: UInt16, isKeyDown: Bool) {
-        let canonicalKeyCode = KeyboardLayoutInfo.canonicalKeyCode(for: keyCode)
-        recentTrustedKeyboardTopRowEvents[isKeyDown] = (canonicalKeyCode, CFAbsoluteTimeGetCurrent())
-    }
-
-    private func shouldSuppressMediaEventForRecentTrustedKeyboardTopRow(
-        keyCode: UInt16,
-        isKeyDown: Bool,
-        now: CFAbsoluteTime
-    ) -> Bool {
-        guard Self.topRowFunctionKeyCodes.contains(keyCode) else { return false }
-        guard let recent = recentTrustedKeyboardTopRowEvents[isKeyDown] else { return false }
-        guard now - recent.timestamp <= keyboardTopRowSourceWindow else {
-            recentTrustedKeyboardTopRowEvents.removeValue(forKey: isKeyDown)
-            return false
-        }
-
-        // Prefer the trusted keyboard event for this press/release window.
-        // This prevents mismatched NX/HID aliases from overriding the correct physical key.
-        return true
+        KeyMapping.hasMappedKeyCode(keyCode)
     }
 
 #if DEBUG
+    func _testReportEventTapRecoveryOutcome(reenabled: Bool) {
+        if reenabled {
+            decoder.reset()
+            onStreamReset?(self)
+        } else {
+            onBecameUnavailable?(self)
+        }
+    }
+
     func _testResolveVirtualKeyCode(nxCode: Int) -> UInt16? {
         resolveVirtualKeyCode(nxCode: nxCode)
     }
 
     func _testShouldDedupeMediaEvent(keyCode: UInt16, isKeyDown: Bool, now: CFAbsoluteTime) -> Bool {
-        shouldDedupeMediaEvent(keyCode: keyCode, isKeyDown: isKeyDown, source: .systemDefined, now: now)
+        decoder.shouldDedupeMediaEvent(
+            canonicalKeyCode: KeyboardLayoutInfo.canonicalKeyCode(for: keyCode),
+            isKeyDown: isKeyDown,
+            source: .systemDefined,
+            now: now
+        )
     }
 
     func _testShouldDedupeMediaEventWithSource(
@@ -585,8 +644,21 @@ final class KeyboardMonitor: @unchecked Sendable {
         source: String,
         now: CFAbsoluteTime
     ) -> Bool {
-        let mappedSource: MediaEventSource = source == "hid" ? .hid : .systemDefined
-        return shouldDedupeMediaEvent(keyCode: keyCode, isKeyDown: isKeyDown, source: mappedSource, now: now)
+        let mappedSource: KeyboardEventDecoder.MediaEventSource = source == "hid" ? .hid : .systemDefined
+        return decoder.shouldDedupeMediaEvent(
+            canonicalKeyCode: KeyboardLayoutInfo.canonicalKeyCode(for: keyCode),
+            isKeyDown: isKeyDown,
+            source: mappedSource,
+            now: now
+        )
+    }
+
+    func _testResolveHIDConsumerUsage(_ usage: UInt32) -> UInt16? {
+        _testResolveHIDUsage(page: UInt32(kHIDPage_Consumer), usage: usage)
+    }
+
+    func _testResolveHIDUsage(page: UInt32, usage: UInt32) -> UInt16? {
+        Self.hidUsageMap[HIDUsage(page: page, usage: usage)]
     }
 
     func _testResolveKeyboardEventKeyCode(rawKeyCode: UInt16, charactersIgnoringModifiers: String?) -> UInt16 {
@@ -633,16 +705,47 @@ final class KeyboardMonitor: @unchecked Sendable {
         }
     }
 
+    func _testDecodeEventLoopKeyboardEvent(
+        rawKeyCode: UInt16,
+        isKeyDown: Bool,
+        isRepeat: Bool = false
+    ) -> KeyEvent? {
+        decodeKeyboardEvent(
+            rawKeyCode: rawKeyCode,
+            isKeyDown: isKeyDown,
+            isRepeat: isRepeat
+        )
+    }
+
     func _testResolveModifierFlagsChanged(keyCode: UInt16, flags: CGEventFlags) -> Bool? {
         resolveModifierFlagsChanged(keyCode: keyCode, flags: flags)
     }
 
     func _testCapsLockEmitSequence(isKeyDown: Bool) -> [Bool] {
-        capsLockEmitSequence(isKeyDown: isKeyDown)
+        decoder.capsLockEmitSequence(isKeyDown: isKeyDown)
     }
 #endif
 
     deinit {
         stop()
+    }
+}
+
+/// Core Foundation event objects are immutable for KeyLight's use here. This
+/// wrapper makes the intentional cross-queue ownership explicit under Swift 6
+/// without broadening KeyboardMonitor's unsafe surface.
+private final class SendableCGEvent: @unchecked Sendable {
+    let value: CGEvent
+
+    init(_ value: CGEvent) {
+        self.value = value
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ operation: () throws -> T) rethrows -> T {
+        lock()
+        defer { unlock() }
+        return try operation()
     }
 }
